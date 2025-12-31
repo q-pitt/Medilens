@@ -1,2 +1,2 @@
-# Medilense
+# Medilens
 AI Medicine prescription Analyzer
