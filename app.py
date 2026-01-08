@@ -45,6 +45,9 @@ if 'check_history' not in st.session_state:
 # ==========================================
 # 2. 사이드바: 이미지 업로드
 # ==========================================
+# ==========================================
+# 2. 사이드바: 이미지 업로드 및 초기화
+# ==========================================
 with st.sidebar:
     st.title("🧬 MediLens")
     st.subheader("📸 처방전 업로드")
@@ -53,7 +56,7 @@ with st.sidebar:
     if uploaded_file:
         st.image(uploaded_file, caption="업로드된 이미지", use_container_width=True)
         if st.button("분석 및 등록", use_container_width=True):
-            # 분석 데이터 시뮬레이션 (image1.jpg 기준)
+            # 분석 데이터 시뮬레이션
             yesterday = today - datetime.timedelta(days=1)
             new_data = [
                 {"name": "세레온캡슐", "days": 14, "color": "#FF4B4B", "time": "식후 30분", "start_date": yesterday, "info": "졸음을 유발할 수 있습니다.", "food": "자몽 주스 피하세요."},
@@ -64,50 +67,97 @@ with st.sidebar:
             st.session_state.medicines = load_data()
             st.rerun()
 
+    # 사이드바 하단으로 버튼을 밀어내기 위한 공백 추가
+    # 10번 정도 반복하면 버튼이 아래로 내려갑니다.
+    for _ in range(10):
+        st.sidebar.write("")
+
     st.divider()
-    if st.sidebar.button("데이터 전체 초기화"):
-        if os.path.exists(DB_FILE): os.remove(DB_FILE)
-        if os.path.exists(HISTORY_FILE): os.remove(HISTORY_FILE)
-        st.session_state.medicines = []
-        st.session_state.check_history = {}
-        st.rerun()
+    
+    # 데이터 초기화 로직 (확인 절차 추가)
+    if "delete_confirm" not in st.session_state:
+        st.session_state.delete_confirm = False
+
+    if not st.session_state.delete_confirm:
+        if st.sidebar.button("🗑️ 데이터 전체 초기화", use_container_width=True):
+            st.session_state.delete_confirm = True
+            st.rerun()
+    else:
+        st.sidebar.warning("⚠️ 정말 모든 데이터를 삭제할까요?")
+        col_yes, col_no = st.sidebar.columns(2)
+        with col_yes:
+            if st.button("예", use_container_width=True):
+                if os.path.exists(DB_FILE): os.remove(DB_FILE)
+                if os.path.exists(HISTORY_FILE): os.remove(HISTORY_FILE)
+                st.session_state.medicines = []
+                st.session_state.check_history = {}
+                st.session_state.delete_confirm = False
+                st.rerun()
+        with col_no:
+            if st.button("아니오", use_container_width=True):
+                st.session_state.delete_confirm = False
+                st.rerun()
 
 # ==========================================
-# 3. 달력 이벤트 구성 (기간 막대 + 완료 배경색)
+# 3. 달력 이벤트 구성
 # ==========================================
 calendar_events = []
 
-# (1) 약 복용 기간 표시 (막대기)
+# 약 복용 기간 표시 (날짜별/약별로 개별 생성)
 for drug in st.session_state.medicines:
-    end_date = drug['start_date'] + datetime.timedelta(days=int(drug['days']))
-    calendar_events.append({
-        "title": drug['name'],
-        "start": drug['start_date'].strftime("%Y-%m-%d"),
-        "end": end_date.strftime("%Y-%m-%d"),
-        "color": drug.get('color', '#3D9DF3')
-    })
-
-# (2) 모든 약 체크 시 배경색 변경 (Y/N 표시)
-dates_in_history = set([date for (date, name) in st.session_state.check_history.keys()])
-for d_str in dates_in_history:
-    d_obj = datetime.datetime.strptime(d_str, "%Y-%m-%d").date()
-    # 해당 날짜에 복용해야 할 약 목록
-    required = [m['name'] for m in st.session_state.medicines if m['start_date'] <= d_obj <= (m['start_date'] + datetime.timedelta(days=int(m['days'])-1))]
-    
-    # 해당 날짜의 모든 약이 체크되었는지 확인
-    if required and all(st.session_state.check_history.get((d_str, name), False) for name in required):
+    for i in range(int(drug['days'])):
+        current_date = drug['start_date'] + datetime.timedelta(days=i)
+        current_date_str = current_date.strftime("%Y-%m-%d")
+        
+        # 해당 날짜 + 해당 약의 이름 조합으로 체크 여부 확인
+        h_key = (current_date_str, drug['name'])
+        is_checked = st.session_state.check_history.get(h_key, False)
+        
+        # 체크 여부에 따른 개별 스타일 설정
+        display_title = f"✅ {drug['name']}" if is_checked else drug['name']
+        base_color = drug.get('color', '#3D9DF3')
+        
         calendar_events.append({
-            "start": d_str,
-            "display": "background",
-            "color": "#D4EDDA"
+            "title": display_title,
+            "start": current_date_str,
+            "end": current_date_str,
+            "allDay": True,
+            "display": "block",
+            # 체크된 약만 색상 변경 
+            "backgroundColor": "#D4EDDA" if is_checked else base_color,
+            "borderColor": "#28A745" if is_checked else base_color,
+            "textColor": "#000000" if is_checked else "#FFFFFF",
         })
 
+
 # ==========================================
-# 4. 메인 화면: 5:5 분할 레이아웃
+# 4. 상단: 상세 요약 (기존 5번 섹션을 위로 이동)
 # ==========================================
-st.title(" 메디렌즈")
+st.title("💊 메디렌즈")
 st.divider()
 
+st.subheader("🔍 등록된 약 상세 요약 및 주의사항")
+
+if not st.session_state.medicines:
+    st.info("등록된 약 정보가 없습니다. 사이드바에서 처방전을 업로드해 주세요.")
+else:
+    # 약 정보를 상단에 가로로 배치하거나 리스트로 보여줌
+    for drug in st.session_state.medicines:
+        with st.expander(f"💡 {drug['name']} 상세 정보", expanded=True): # 기본적으로 열려있게 설정
+            ec1, ec2 = st.columns(2)
+            with ec1:
+                st.markdown("##### 📌 복약 가이드")
+                st.info(drug.get('info', '복용 시 주의사항 정보가 없습니다.'))
+            with ec2:
+                st.markdown("##### 🥗 음식과의 페어링")
+                pairing_text = drug.get('food', '관련 음식 정보가 없습니다.')
+                st.warning(f"**추천 및 주의 사항:**\n\n{pairing_text}")
+
+st.markdown("---")
+
+# ==========================================
+# 5. 하단: 5:5 분할 레이아웃 (달력 & 체크리스트)
+# ==========================================
 col_left, col_right = st.columns([1, 1], gap="large")
 
 # --- [왼쪽: 바둑판 달력] ---
@@ -122,13 +172,9 @@ with col_left:
 
 # --- [오른쪽: 체크리스트] ---
 with col_right:
-    # 에러 방지: T15:00:00... 형태의 데이터를 처리하기 위해 앞 10자만 슬라이싱
     clicked_date_str = state.get("dateClick", {}).get("date")
     if clicked_date_str:
         temp_date = datetime.datetime.strptime(clicked_date_str[:10], "%Y-%m-%d").date()
-        
-        # [중요] 8일을 눌렀는데 7일이 나온다면, 시차 보정을 위해 하루를 더해줍니다.
-        # 클릭한 데이터에 시간 정보(T...)가 포함되어 있다면 시차로 인해 하루 전날로 인식될 수 있습니다.
         if "T" in clicked_date_str:
             view_date = temp_date + datetime.timedelta(days=1)
         else:
@@ -143,18 +189,15 @@ with col_right:
         drug_start = drug['start_date']
         drug_end = drug_start + datetime.timedelta(days=int(drug['days']) - 1)
         
-        # 선택한 날짜가 복용 범위 내에 있는 경우만 표시
         if drug_start <= view_date <= drug_end:
             active_drugs.append(drug)
             remaining = (drug_end - view_date).days
             
             with st.container(border=True):
-                # [체크박스 // 이름 // 복용법 // 며칠분 // 디데이]
                 c1, c2, c3, c4, c5 = st.columns([0.5, 2, 2, 1.5, 1])
                 with c1:
                     h_key = (str(view_date), drug['name'])
                     is_checked = st.session_state.check_history.get(h_key, False)
-                    # 체크박스 클릭 시 파일 저장
                     if st.checkbox("", value=is_checked, key=f"cb_{view_date}_{drug['name']}"):
                         st.session_state.check_history[h_key] = True
                         save_history()
@@ -166,35 +209,5 @@ with col_right:
                 with c4: st.caption(f"📅 {drug['days']}일분")
                 with c5: st.markdown(f"**D-{remaining}**")
 
-    if not active_drugs:
-        if not st.session_state.medicines:
-            st.info("사이드바에서 처방전을 업로드하여 약을 등록해 주세요.")
-        else:
-            st.info("해당 날짜에는 복용할 약이 없습니다.")
-
-# ==========================================
-# 5. 하단: 상세 요약 (스크롤 다운)
-# ==========================================
-st.markdown("---")
-st.subheader("🔍 등록된 약 상세 요약 및 주의사항")
-
-if not st.session_state.medicines:
-    st.write("등록된 약 정보가 없습니다.")
-else:
-    for drug in st.session_state.medicines:
-        # 약 이름별로 펼칠 수 있는 메뉴 생성
-        with st.expander(f"💡 {drug['name']} 상세 정보"):
-            # 왼쪽(주의사항)과 오른쪽(음식과의 페어링) 2칸으로 분할
-            ec1, ec2 = st.columns(2)
-            
-            with ec1:
-                st.markdown("##### 📌 복약 가이드")
-                # 기존 info 컬럼 내용을 파란색 박스로 표시
-                st.info(drug.get('info', '복용 시 주의사항 정보가 없습니다.'))
-            
-            with ec2:
-                st.markdown("##### 🥗 음식과의 페어링")
-                # 기존 food 컬럼 내용을 노란색 박스(warning)에 담아 표시
-                # '함께 먹으면 좋은 음식' 칸은 삭제하고 여기에 통합되었습니다.
-                pairing_text = drug.get('food', '관련 음식 정보가 없습니다.')
-                st.warning(f"**추천 및 주의 사항:**\n\n{pairing_text}")
+    if not active_drugs and st.session_state.medicines:
+        st.info("해당 날짜에는 복용할 약이 없습니다.")
