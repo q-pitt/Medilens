@@ -4,7 +4,7 @@ import datetime
 import streamlit as st
 import re
 import random
-import api_handler as ah # api_handler 연동
+import api_search
 
 USER_DB = "user_meds.csv"
 HISTORY_FILE = "check_history.csv"
@@ -44,20 +44,21 @@ def process_and_save_ocr(ocr_data):
         clean_name = re.split(r'\(', raw_name)[0].strip()
         
         # --- 식약처 정보 매칭 로직 ---
-        api_result = ah.get_kfda_info(clean_name)
+        # api_search.search_drug_api를 사용 (dict 또는 None 반환)
+        api_result = api_search.search_drug_api(clean_name)
         
-        if api_result == "NEED_KEY":
-            display_info = "⚠️ 식약처 API 키 설정이 필요합니다."
-            display_food = ".env 파일을 확인해주세요."
-        elif api_result == "NO_DATA":
-            display_info = "❓ 정보 없음 (식약처 미등록)"
-            display_food = "정보 없음"
-        elif isinstance(api_result, dict):
-            # API에서 가져온 실제 정보 할당
-            display_info = api_result.get('efcyQesitm', "효능 정보가 없습니다.")
-            display_food = api_result.get('atpnQesitm', "주의사항 정보가 없습니다.")
+        if api_result:
+            # API에서 가져온 실제 정보 할당 (XML 태그 제거 함수 등을 api_search 내부에서 처리하지 않고 원본을 반환한다면 여기서 처리 필요하지만, 
+            # api_search.py 코드를 보면 search_drug_api는 원본 dict를 반환함. 
+            # 하지만 api_search.run_api_search 에서는 태그 제거 로직이 있음.
+            # search_drug_api 결과는 raw 데이터임. 태그 제거가 필요함.
+            # api_search.py에 remove_xml_tags가 있지만 import 가능 여부 확인 필요.
+            # api_search.py 내의 remove_xml_tags는 모듈 레벨 함수이므로 import 가능.
+            
+            display_info = api_search.remove_xml_tags(api_result.get('EE_DOC_DATA', "효능 정보가 없습니다."))
+            display_food = api_search.remove_xml_tags(api_result.get('NB_DOC_DATA', "주의사항 정보가 없습니다."))
         else:
-            display_info = "정보 없음"
+            display_info = "❓ 정보 없음 (식약처 미등록 또는 검색 실패)"
             display_food = "정보 없음"
         # ----------------------------
 

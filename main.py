@@ -5,6 +5,8 @@ import pandas as pd
 import os
 import json
 import random
+import re
+from urllib.parse import quote
 
 # --- [AI 분석 모듈 임포트] ---
 import ocr
@@ -43,6 +45,18 @@ def save_history():
         history_list.append({"date": date, "name": name, "checked": checked})
     if history_list:
         pd.DataFrame(history_list).to_csv(HISTORY_FILE, index=False, encoding='utf-8-sig')
+
+def delete_medicine(drug_name):
+    if os.path.exists(DB_FILE):
+        try:
+            df = pd.read_csv(DB_FILE)
+        except:
+            df = pd.read_csv(DB_FILE, encoding='cp949')
+            
+        new_df = df[df['name'] != drug_name]
+        new_df.to_csv(DB_FILE, index=False, encoding='utf-8-sig')
+        return True
+    return False
 
 # 세션 상태 초기화
 if 'medicines' not in st.session_state:
@@ -226,6 +240,24 @@ else:
                 else:
                     st.secondary_label = "특별한 제한 없음"
                     st.caption("특별한 제한 없음")
+            
+            st.divider()
+            c_link, c_del = st.columns([4, 1])
+            
+            with c_link:
+                # 식약처 검색 링크
+                clean_name = re.split(r'\(', drug['name'])[0].strip()
+                encoded_name = quote(clean_name)
+                url = f"https://nedrug.mfds.go.kr/searchDrug?itemName={encoded_name}"
+                st.link_button("🔍 식약처 상세 검색", url, use_container_width=True)
+                
+            with c_del:
+                # 개별 삭제 버튼
+                if st.button("🗑️ 삭제", key=f"del_{drug['name']}"):
+                    if delete_medicine(drug['name']):
+                        st.success("삭제되었습니다.")
+                        st.session_state.medicines = load_data()
+                        st.rerun()
 
 st.markdown("---")
 

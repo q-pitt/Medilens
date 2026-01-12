@@ -3,7 +3,7 @@ from streamlit_calendar import calendar
 import datetime
 import pandas as pd
 import data_manager as dm
-import api_handler as ah
+import ocr
 import re
 from urllib.parse import quote
 
@@ -46,8 +46,8 @@ with st.sidebar:
         st.image(uploaded_file, caption="업로드된 이미지", use_container_width=True)
         if st.button("분석 및 등록", use_container_width=True):
             with st.spinner("Gemini가 처방전을 분석 중입니다..."):
-                # 1. api_handler를 통해 이미지 분석
-                ocr_result = ah.analyze_prescription(uploaded_file)
+                # 1. ocr 모듈을 통해 이미지 분석
+                ocr_result = ocr.run_ocr(uploaded_file)
                 
                 if ocr_result:
                     # 2. data_manager를 통해 DB 매칭 및 저장
