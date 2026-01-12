@@ -1,0 +1,9 @@
+streamlit
+google-generativeai
+requests
+streamlit-calendar
+pandas
+symspellpy
+jamo
+Pillow
+ics
