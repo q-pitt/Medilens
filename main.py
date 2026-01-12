@@ -23,6 +23,14 @@ DB_FILE = "medilens_db.csv"
 HISTORY_FILE = "check_history.csv" 
 today = datetime.date.today()
 
+def get_random_color():
+    """약 구분을 위한 랜덤 색상 부여"""
+    colors = [
+        "#FF6B6B", "#4ECDC4", "#45B7D1", "#FFA07A", "#98D8C8", 
+        "#F06292", "#AED581", "#FFD54F", "#4DB6AC", "#9575CD"
+    ]
+    return random.choice(colors)
+
 # 데이터 로드 함수
 def load_data():
     if os.path.exists(DB_FILE):
@@ -112,7 +120,7 @@ with st.sidebar:
 
                 # --- [데이터 변환 및 저장] ---
                 new_data = []
-                colors = ["#FF4B4B", "#2ECC71", "#3D9DF3", "#FFA500", "#9B59B6"]
+                # colors = ["#FF4B4B", "#2ECC71", "#3D9DF3", "#FFA500", "#9B59B6"] (기존 고정 색상 제거)
                 schedule_list = ai_result.get('schedule_time_list', [])
                 time_str = ", ".join(schedule_list) if schedule_list else "식후 30분"
                 
@@ -123,7 +131,7 @@ with st.sidebar:
                     entry = {
                         "name": drug_name,
                         "days": days,
-                        "color": colors[idx % len(colors)],
+                        "color": get_random_color(), # 랜덤 파스텔톤 색상 적용
                         "time": time_str, 
                         "start_date": today, 
                         "efficacy": drug.get('efficacy', '-'), # [추가] 효능
