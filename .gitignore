@@ -209,3 +209,6 @@ __marimo__/
 # 사용자의 약 정보 및 체크 기록
 user_meds.csv
 check_history.csv
+
+# Secrets
+.streamlit/secrets.toml
