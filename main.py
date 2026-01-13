@@ -23,14 +23,6 @@ DB_FILE = "medilens_db.csv"
 HISTORY_FILE = "check_history.csv" 
 today = datetime.date.today()
 
-def get_random_color():
-    """약 구분을 위한 랜덤 색상 부여"""
-    colors = [
-        "#FF6B6B", "#4ECDC4", "#45B7D1", "#FFA07A", "#98D8C8", 
-        "#F06292", "#AED581", "#FFD54F", "#4DB6AC", "#9575CD"
-    ]
-    return random.choice(colors)
-
 # 데이터 로드 함수
 def load_data():
     if os.path.exists(DB_FILE):
@@ -65,6 +57,14 @@ def delete_medicine(drug_name):
         new_df.to_csv(DB_FILE, index=False, encoding='utf-8-sig')
         return True
     return False
+
+def get_random_color():
+    """약 구분을 위한 랜덤 색상 부여"""
+    colors = [
+        "#FF6B6B", "#4ECDC4", "#45B7D1", "#FFA07A", "#98D8C8", 
+        "#F06292", "#AED581", "#FFD54F", "#4DB6AC", "#9575CD"
+    ]
+    return random.choice(colors)
 
 # 세션 상태 초기화
 if 'medicines' not in st.session_state:
@@ -120,14 +120,20 @@ with st.sidebar:
 
                 # --- [데이터 변환 및 저장] ---
                 new_data = []
-                # colors = ["#FF4B4B", "#2ECC71", "#3D9DF3", "#FFA500", "#9B59B6"] (기존 고정 색상 제거)
+                # colors = ["#FF4B4B", "#2ECC71", "#3D9DF3", "#FFA500", "#9B59B6"]
                 schedule_list = ai_result.get('schedule_time_list', [])
                 time_str = ", ".join(schedule_list) if schedule_list else "식후 30분"
                 
                 for idx, drug in enumerate(ai_result.get('drug_analysis', [])):
                     drug_name = drug.get('name', '알 수 없음')
-                    days = 3 # 기본 3일
                     
+                    # [수정] 처방 일수 동적 적용 (기본값 3일)
+                    try:
+                        raw_days = drug.get('days', 3)
+                        days = int(raw_days)
+                    except:
+                        days = 3
+                  
                     entry = {
                         "name": drug_name,
                         "days": days,
@@ -151,6 +157,10 @@ with st.sidebar:
                 df_combined.to_csv(DB_FILE, index=False, encoding='utf-8-sig')
                 
                 st.session_state.medicines = load_data()
+                # 리포트 갱신을 위해 기존 캐시 삭제
+                if 'last_report' in st.session_state:
+                    del st.session_state['last_report']
+
                 st.success(f"{len(new_data)}개의 약물이 성공적으로 등록되었습니다!")
                 time.sleep(1)
                 st.rerun()
@@ -213,61 +223,111 @@ for drug in st.session_state.medicines:
             "textColor": "#000000" if is_checked else "#FFFFFF",
         })
 
+
+
 # ==========================================
-# 4. 상단: 상세 요약
+# 4. 상단: 상세 요약 및 리포트
 # ==========================================
 st.title("💊 메디렌즈 - AI 복약 스케줄러")
 st.divider()
 
-st.subheader("🔍 등록된 약 상세 요약 및 주의사항")
+st.subheader("📝 종합 복약 리포트")
+st.write("사용자의 모든 처방 약을 분석하여 종합 가이드를 생성합니다.")
 
-if not st.session_state.medicines:
-    st.info("등록된 약 정보가 없습니다. 사이드바에서 처방전을 업로드해 주세요.")
-else:
-    for drug in st.session_state.medicines:
-        with st.expander(f"💡 {drug['name']} 상세 정보", expanded=True):
-            # 1. 상단: 효능 & 용법
-            c_eff, c_use = st.columns(2)
-            with c_eff:
-                st.markdown("**� 효능·효과**")
-                st.info(drug.get('efficacy', '정보 없음'))
-            with c_use:
-                st.markdown("**📝 용법·용량**")
-                st.success(drug.get('usage', '정보 없음'))
-            
-            # 2. 하단: 주의사항 & 음식
-            c_warn, c_food = st.columns(2)
-            with c_warn:
-                st.markdown("**⚠️ 주의사항**")
-                st.warning(drug.get('info', '정보 없음'))
-            with c_food:
-                st.markdown("**🥗 음식 가이드**")
-                food_txt = drug.get('food', '정보 없음')
-                if food_txt and food_txt != '특별한 제한 없음':
-                    st.error(food_txt)
-                else:
-                    st.secondary_label = "특별한 제한 없음"
-                    st.caption("특별한 제한 없음")
-            
-            st.divider()
-            c_link, c_del = st.columns([4, 1])
-            
-            with c_link:
-                # 식약처 검색 링크
-                clean_name = re.split(r'\(', drug['name'])[0].strip()
-                encoded_name = quote(clean_name)
-                url = f"https://nedrug.mfds.go.kr/searchDrug?itemName={encoded_name}"
-                st.link_button("🔍 식약처 상세 검색", url, use_container_width=True)
+# [AI 리포트 자동 생성]
+if 'last_report' not in st.session_state or not st.session_state['last_report']:
+    if st.session_state.medicines:
+        with st.spinner("AI 약사가 리포트를 작성 중입니다... (약 10~20초 소요)"):
+            report_content = care_processor.generate_summary_report(st.session_state.medicines)
+            st.session_state['last_report'] = report_content
+    else:
+            st.info("비어있는 처방전입니다. 약을 먼저 등록해주세요.")
+        
+# [리포트 표시]
+if 'last_report' in st.session_state and st.session_state['last_report']:
+    report = st.session_state['last_report']
+    
+    # 에러 체크
+    if isinstance(report, str) or "error" in report:
+        st.error(report if isinstance(report, str) else report.get("error"))
+    else:
+        # 1. 인사말
+        st.info(report.get("opening_message", "안녕히 가세요."))
+        st.divider()
+
+        # 2. 약물별 상세 카드 (리포트 데이터를 기반으로 표시)
+        st.subheader("💊 처방 약 설명과 복용법")
+        for med in report.get("medicines", []):
+            with st.expander(f"**{med.get('name', '약품')}** 상세 정보", expanded=True):
                 
-            with c_del:
-                # 개별 삭제 버튼
-                if st.button("🗑️ 삭제", key=f"del_{drug['name']}"):
-                    if delete_medicine(drug['name']):
-                        st.success("삭제되었습니다.")
-                        st.session_state.medicines = load_data()
-                        st.rerun()
+                # 1. 상단: 효능 & 용법
+                c_eff, c_use = st.columns(2)
+                with c_eff:
+                    st.markdown("**💊 효능·효과**")
+                    st.info(med.get('efficacy', '정보 없음'))
+                with c_use:
+                    st.markdown("**📝 용법·용량**")
+                    st.success(med.get('usage', '정보 없음'))
+                
+                # 2. 하단: 주의사항 & 음식
+                c_warn, c_food = st.columns(2)
+                with c_warn:
+                    st.markdown("**⚠️ 주의사항**")
+                    st.warning(med.get('caution', '정보 없음'))
+                with c_food:
+                    st.markdown("**🥗 음식 가이드**")
+                    food_txt = med.get('food_guide', '정보 없음')
+                    if food_txt and food_txt != '특별한 제한 없음':
+                        st.error(food_txt)
+                    else:
+                        st.caption("특별한 제한 없음")
+                
+                # 3. 추가 기능: 식약처 링크 & 삭제 버튼
+                st.divider()
+                c_link, c_del = st.columns([4, 1])
+                with c_link:
+                    # 식약처 검색 링크
+                    clean_name = re.split(r'\(', med['name'])[0].strip()
+                    encoded_name = quote(clean_name)
+                    url = f"https://nedrug.mfds.go.kr/searchDrug?itemName={encoded_name}"
+                    st.link_button("🔍 식약처 상세 검색", url, use_container_width=True)
+                
+                with c_del:
+                    # 개별 삭제 버튼 (리포트의 약 이름을 기준으로 삭제 시도)
+                    if st.button("🗑️ 삭제", key=f"del_{med['name']}"):
+                        if delete_medicine(med['name']):
+                            st.success("삭제되었습니다.")
+                            st.session_state.medicines = load_data()
+                            # 삭제 후 리포트 갱신을 위해 캐시 삭제
+                            if 'last_report' in st.session_state:
+                                del st.session_state['last_report']
+                            st.rerun()
 
-st.markdown("---")
+        st.divider()
+
+        # 3. 종합 정보
+        schedules = report.get("schedule_proposal", {})
+        if schedules:
+            st.subheader(schedules.get("title", "복용 스케줄"))
+            st.markdown(schedules.get("content", ""))
+
+        safety = report.get("safety_warnings", {})
+        if safety:
+            st.subheader(safety.get("title", "안전 주의사항"))
+            st.markdown(safety.get("content", ""))
+            
+        tips = report.get("medication_tips", {})
+        if tips:
+            st.subheader(tips.get("title", "복약 팁"))
+            st.markdown(tips.get("content", ""))
+
+st.divider()
+
+# 2. 데이터 확인 (하단 배치)
+with st.expander("🔧 개발자 도구: JSON 데이터 확인"):
+    st.json(st.session_state.medicines)
+
+st.divider()
 
 # ==========================================
 # 5. 하단: 5:5 분할 레이아웃 (달력 & 체크리스트)
@@ -282,6 +342,7 @@ with col_left:
         "initialView": "dayGridMonth", 
         "height": 550,
     }
+    # [복구] 기존 변수명 사용: main_cal
     state = calendar(events=calendar_events, options=calendar_options, key="main_cal")
 
 # --- [오른쪽: 체크리스트] ---
@@ -301,7 +362,12 @@ with col_right:
     active_drugs = []
     for drug in st.session_state.medicines:
         drug_start = drug['start_date']
-        drug_end = drug_start + datetime.timedelta(days=int(drug['days']) - 1)
+        try:
+            raw_days = drug.get('days', 3)
+            days = int(raw_days)
+        except:
+            days = 3
+        drug_end = drug_start + datetime.timedelta(days=days - 1)
         
         if drug_start <= view_date <= drug_end:
             active_drugs.append(drug)
@@ -312,15 +378,20 @@ with col_right:
                 with c1:
                     h_key = (str(view_date), drug['name'])
                     is_checked = st.session_state.check_history.get(h_key, False)
+                    # [복구] 기존 변수명 사용: cb_
                     if st.checkbox("복용 완료", label_visibility="collapsed", value=is_checked, key=f"cb_{view_date}_{drug['name']}"):
                         st.session_state.check_history[h_key] = True
                         save_history()
+                        st.rerun() # 동기화
                     else:
-                        st.session_state.check_history[h_key] = False
-                        save_history()
+                        if is_checked:
+                            st.session_state.check_history[h_key] = False
+                            save_history()
+                            st.rerun()
+
                 with c2: st.markdown(f"**{drug['name']}**")
                 with c3: st.caption(f"⏰ {drug['time']}")
-                with c4: st.caption(f"📅 {drug['days']}일분")
+                with c4: st.caption(f"📅 {days}일분")
                 with c5: st.markdown(f"**D-{remaining}**")
 
     if not active_drugs and st.session_state.medicines:
