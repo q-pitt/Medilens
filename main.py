@@ -408,13 +408,13 @@ with col_right:
                             save_history()
 
                 with c2: st.markdown(f"**{drug['name']}**")
-                with c3: st.caption(f"⏰ {drug['time']}")
+                with c3: st.caption(f"{drug['time']}")
                 with c4: st.caption(f"📅 {days}일분")
                 with c5: st.markdown(f"**D-{remaining}**")
                 with c6 :
                     cal_link = get_google_calendar_url(drug)
                     st.markdown(
-                        f'<a href="{cal_link}" target="_blank" style="font-size: 0.75em; color: white; background-color: #FF4B4B; padding: 4px 8px; border-radius: 5px; text-decoration: none; display: inline-block;">🔔 알림 등록</a>', 
+                        f'<a href="{cal_link}" target="_blank" style="font-size: 0.75em; color: white; background-color: #4285F4; padding: 4px 8px; border-radius: 5px; text-decoration: none; display: inline-block;">🔔 알림 등록</a>', 
                         unsafe_allow_html=True)
 
 
