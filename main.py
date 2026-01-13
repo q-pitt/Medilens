@@ -34,7 +34,6 @@ def load_data():
 def load_history():
     if os.path.exists(HISTORY_FILE):
         df_h = pd.read_csv(HISTORY_FILE)
-        # (날짜문자열, 약이름) 튜플을 키로 사용
         return dict(zip(zip(df_h['date'].astype(str), df_h['name']), df_h['checked']))
     return {}
 
@@ -109,7 +108,7 @@ with st.sidebar:
                     }
                     
                     # 4. LLM 분석 (RAG 포함)
-                    st.write("🧠 AI 약사가 복약 지도를 작성 중입니다...")
+                    st.write("🧠 AI가 복약 지도를 작성 중입니다...")
                     ai_result = care_processor.analyze_with_llm(final_json)
                     
                     if "error" in ai_result:
@@ -124,6 +123,7 @@ with st.sidebar:
                 schedule_list = ai_result.get('schedule_time_list', [])
                 time_str = ", ".join(schedule_list) if schedule_list else "식후 30분"
                 
+                # 1. 약물 분석 정보 저장
                 for idx, drug in enumerate(ai_result.get('drug_analysis', [])):
                     drug_name = drug.get('name', '알 수 없음')
                     
@@ -140,9 +140,9 @@ with st.sidebar:
                         "color": get_random_color(), # 랜덤 파스텔톤 색상 적용
                         "time": time_str, 
                         "start_date": today, 
-                        "efficacy": drug.get('efficacy', '-'), # [추가] 효능
-                        "usage": drug.get('usage', '-'),       # [추가] 용법
-                        "info": drug.get('precautions', '특이사항 없음'),
+                        "efficacy": drug.get('efficacy', '-'), 
+                        "usage": drug.get('usage', '-'),       
+                        "info": drug.get('caution', '특이사항 없음'), 
                         "food": drug.get('food_guide', '특이사항 없음')
                     }
                     new_data.append(entry)
@@ -157,9 +157,17 @@ with st.sidebar:
                 df_combined.to_csv(DB_FILE, index=False, encoding='utf-8-sig')
                 
                 st.session_state.medicines = load_data()
-                # 리포트 갱신을 위해 기존 캐시 삭제
-                if 'last_report' in st.session_state:
-                    del st.session_state['last_report']
+
+                # 2. 리포트 즉시 저장 (One-Shot 통합)
+                if "report" in ai_result:
+                    report_data = ai_result["report"]
+                    # 리포트 카드에 표시할 약 정보도 함께 담음 (중복 방지 위해 참조)
+                    report_data["medicines"] = ai_result.get('drug_analysis', [])
+                    st.session_state['last_report'] = report_data
+                else:
+                    # 리포트가 없으면 지움
+                    if 'last_report' in st.session_state:
+                         del st.session_state['last_report']
 
                 st.success(f"{len(new_data)}개의 약물이 성공적으로 등록되었습니다!")
                 time.sleep(1)
@@ -234,14 +242,11 @@ st.divider()
 st.subheader("📝 종합 복약 리포트")
 st.write("사용자의 모든 처방 약을 분석하여 종합 가이드를 생성합니다.")
 
-# [AI 리포트 자동 생성]
 if 'last_report' not in st.session_state or not st.session_state['last_report']:
     if st.session_state.medicines:
-        with st.spinner("AI 약사가 리포트를 작성 중입니다... (약 10~20초 소요)"):
-            report_content = care_processor.generate_summary_report(st.session_state.medicines)
-            st.session_state['last_report'] = report_content
+        st.info("💡 사이드바에서 처방전을 업로드하면 AI 상세 리포트가 이곳에 표시됩니다.")
     else:
-            st.info("비어있는 처방전입니다. 약을 먼저 등록해주세요.")
+        st.info("비어있는 처방전입니다. 약을 먼저 등록해주세요.")
         
 # [리포트 표시]
 if 'last_report' in st.session_state and st.session_state['last_report']:
@@ -252,7 +257,7 @@ if 'last_report' in st.session_state and st.session_state['last_report']:
         st.error(report if isinstance(report, str) else report.get("error"))
     else:
         # 1. 인사말
-        st.info(report.get("opening_message", "안녕히 가세요."))
+        st.info(report.get("opening_message", "안녕하세요."))
         st.divider()
 
         # 2. 약물별 상세 카드 (리포트 데이터를 기반으로 표시)
@@ -293,7 +298,7 @@ if 'last_report' in st.session_state and st.session_state['last_report']:
                     st.link_button("🔍 식약처 상세 검색", url, use_container_width=True)
                 
                 with c_del:
-                    # 개별 삭제 버튼 (리포트의 약 이름을 기준으로 삭제 시도)
+                    # 개별 삭제 버튼
                     if st.button("🗑️ 삭제", key=f"del_{med['name']}"):
                         if delete_medicine(med['name']):
                             st.success("삭제되었습니다.")
@@ -342,7 +347,6 @@ with col_left:
         "initialView": "dayGridMonth", 
         "height": 550,
     }
-    # [복구] 기존 변수명 사용: main_cal
     state = calendar(events=calendar_events, options=calendar_options, key="main_cal")
 
 # --- [오른쪽: 체크리스트] ---
@@ -378,7 +382,6 @@ with col_right:
                 with c1:
                     h_key = (str(view_date), drug['name'])
                     is_checked = st.session_state.check_history.get(h_key, False)
-                    # [복구] 기존 변수명 사용: cb_
                     if st.checkbox("복용 완료", label_visibility="collapsed", value=is_checked, key=f"cb_{view_date}_{drug['name']}"):
                         st.session_state.check_history[h_key] = True
                         save_history()
