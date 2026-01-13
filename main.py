@@ -65,6 +65,23 @@ def get_random_color():
     ]
     return random.choice(colors)
 
+def get_google_calendar_url(drug):
+    base_url = "https://www.google.com/calendar/render?action=TEMPLATE"
+    # 이름에서 괄호 제거 (예: 타이레놀(80mg) -> 타이레놀)
+    clean_name = re.split(r'\(', drug['name'])[0].strip()
+    title = quote(f"💊 [메디렌즈] {clean_name} 복용")
+    
+    # 상세 정보 구성
+    details_text = f"용법: {drug.get('usage', '-')}\n효능: {drug.get('efficacy', '-')}\n주의사항: {drug.get('info', '-')}"
+    details = quote(details_text)
+    
+    # 날짜 및 반복 설정
+    start_date = drug['start_date'].strftime('%Y%m%d')
+    end_date = drug['start_date'].strftime('%Y%m%d')
+    recur = quote(f"RRULE:FREQ=DAILY;COUNT={drug['days']}")
+    
+    return f"{base_url}&text={title}&details={details}&dates={start_date}/{end_date}&recur={recur}"
+
 # 세션 상태 초기화
 if 'medicines' not in st.session_state:
     st.session_state.medicines = load_data()
@@ -378,24 +395,28 @@ with col_right:
             remaining = (drug_end - view_date).days
             
             with st.container(border=True):
-                c1, c2, c3, c4, c5 = st.columns([0.5, 2, 2, 1.5, 1])
+                c1, c2, c3, c4, c5, c6 = st.columns([0.4, 2.2, 1.5, 1, 0.8, 1.2])
                 with c1:
                     h_key = (str(view_date), drug['name'])
                     is_checked = st.session_state.check_history.get(h_key, False)
                     if st.checkbox("복용 완료", label_visibility="collapsed", value=is_checked, key=f"cb_{view_date}_{drug['name']}"):
                         st.session_state.check_history[h_key] = True
                         save_history()
-                        st.rerun() # 동기화
                     else:
                         if is_checked:
                             st.session_state.check_history[h_key] = False
                             save_history()
-                            st.rerun()
 
                 with c2: st.markdown(f"**{drug['name']}**")
                 with c3: st.caption(f"⏰ {drug['time']}")
                 with c4: st.caption(f"📅 {days}일분")
                 with c5: st.markdown(f"**D-{remaining}**")
+                with c6 :
+                    cal_link = get_google_calendar_url(drug)
+                    st.markdown(
+                        f'<a href="{cal_link}" target="_blank" style="font-size: 0.75em; color: white; background-color: #FF4B4B; padding: 4px 8px; border-radius: 5px; text-decoration: none; display: inline-block;">🔔 알림 등록</a>', 
+                        unsafe_allow_html=True)
+
 
     if not active_drugs and st.session_state.medicines:
         st.info("해당 날짜에는 복용할 약이 없습니다.")
