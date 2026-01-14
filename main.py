@@ -39,27 +39,47 @@ def get_random_color():
     ]
     return random.choice(colors)
 
-def get_google_calendar_url(drug):
-    base_url = "https://www.google.com/calendar/render?action=TEMPLATE"
-    # 이름에서 괄호 제거
-    clean_name = re.split(r'\(', drug['name'])[0].strip()
-    title = quote(f"💊 [메디렌즈] {clean_name} 복용")
-    
-    details_text = f"용법: {drug.get('usage', '-')}\n효능: {drug.get('efficacy', '-')}\n주의사항: {drug.get('info', '-')}"
-    details = quote(details_text)
-    
-    # 날짜 문자열 처리
-    s_date_str = drug['start_date'] # DB에서 가져온건 문자열일 수 있음
-    if isinstance(s_date_str, str):
-        s_date_obj = datetime.datetime.strptime(s_date_str, "%Y-%m-%d").date()
-    else:
-        s_date_obj = s_date_str
+def update_multiple_medicines_dates(updates):
+    """updates: {약이름: 새로운날짜} 형태의 딕셔너리"""
+    if os.path.exists(DB_FILE):
+        df = pd.read_csv(DB_FILE)
+        for drug_name, new_date in updates.items():
+            # CSV 파일 내의 start_date를 선택한 날짜 문자열로 변경
+            df.loc[df['name'] == drug_name, 'start_date'] = new_date.strftime('%Y-%m-%d')
+        df.to_csv(DB_FILE, index=False, encoding='utf-8-sig')
+        return True
+    return False
 
-    start_date = s_date_obj.strftime('%Y%m%d')
-    end_date = s_date_obj.strftime('%Y%m%d')
-    recur = quote(f"RRULE:FREQ=DAILY;COUNT={drug['days']}")
+def get_bulk_calendar_url(medicines, slot_name="전체", start_time=None, end_time=None):
+    if not medicines: return "#"
     
-    return f"{base_url}&text={title}&details={details}&dates={start_date}/{end_date}&recur={recur}"
+    base_url = "https://www.google.com/calendar/render?action=TEMPLATE"
+    
+    # 제목 설정: [메디렌즈] 아침 복용 (약이름들...)
+    drug_names = ", ".join([d['name'].split('(')[0].strip() for d in medicines])
+    title = quote(f"💊 [메디렌즈] {slot_name} 복용 ({drug_names})")
+    
+    # 상세 정보 통합
+    details_parts = [f"[{slot_name} 복약 가이드]"]
+    for d in medicines:
+        details_parts.append(f"- {d['name']}: {d.get('time', '식후 30분')} ({d.get('usage', '-')})")
+    details = quote("\n".join(details_parts))
+    
+    # 날짜 및 시간 설정
+    start_date = medicines[0]['start_date'].strftime('%Y%m%d')
+    if start_time and end_time:
+        # 시간대별 등록 (예: 아침 09시)
+        dates = f"{start_date}T{start_time}/{start_date}T{end_time}"
+    else:
+        # 종일 등록
+        dates = f"{start_date}/{start_date}"
+    
+    # 반복 설정 (가장 긴 복용 일수 기준)
+    max_days = max([int(d.get('days', 3)) for d in medicines])
+    recur = quote(f"RRULE:FREQ=DAILY;COUNT={max_days}")
+    
+    return f"{base_url}&text={title}&details={details}&dates={dates}&recur={recur}"
+
 
 # --- 데이터 로드 (DB 연동) ---
 # 세션 상태 초기화 (또는 리프레시)
@@ -325,17 +345,69 @@ with col_left:
 
 # --- [오른쪽: 체크리스트] ---
 with col_right:
+    # 1. 클릭한 날짜에 따른 view_date 결정 로직
     clicked_date_str = state.get("dateClick", {}).get("date")
     if clicked_date_str:
         temp_date = datetime.datetime.strptime(clicked_date_str[:10], "%Y-%m-%d").date()
-        if "T" in clicked_date_str: # Timezone issue fix
+        if "T" in clicked_date_str:  # 타임존 이슈 해결용
             view_date = temp_date + datetime.timedelta(days=1)
         else:
             view_date = temp_date
     else:
         view_date = today
 
-    st.subheader(f"📋 {view_date.strftime('%m월 %d일')} 체크리스트")
+    # 상단 헤더 및 일괄 수정 팝오버
+    head_col1, head_col2, head_col3 = st.columns([2.5, 1.5, 1.5]) 
+    
+    with head_col1:
+        st.subheader(f"📋 {view_date.strftime('%m월 %d일')} 리스트")
+    
+    with head_col2:
+        # 📅 일정 일괄 수정 팝오버
+        with st.popover("📅 일정 일괄 수정", use_container_width=True):
+            st.subheader("🗓️ 날짜 수정")
+            
+            # --- [전체 일괄 변경 섹션] ---
+            st.caption("모든 약의 시작일을 동일하게 변경하려면?")
+            all_date = st.date_input("공통 시작일 선택", value=view_date, key="all_date_input")
+            
+            if st.button("🚀 모든 약에 이 날짜 적용", use_container_width=True):
+                # 모든 약의 날짜를 선택한 날짜로 맵핑
+                bulk_updates = {d['name']: all_date for d in st.session_state.medicines}
+                if update_multiple_medicines_dates(bulk_updates):
+                    st.success("모든 약의 시작일이 변경되었습니다!")
+                    # 데이터 동기화
+                    st.session_state.medicines = load_data() 
+                    st.rerun()
+    
+    with head_col3:
+
+        with st.popover("🔔 알림 등록", use_container_width=True):
+            st.subheader("💡 구글 캘린더 일괄 등록")
+            st.write("원하시는 등록 방식을 선택하세요.")
+            
+            # 1. 시간대별 등록 섹션
+            st.markdown("---")
+            st.caption("🕒 시간대별 등록 (총 3번 저장)")
+            c1, c2, c3 = st.columns(3)
+            with c1:
+                url_m = get_bulk_calendar_url(st.session_state.medicines, "아침", "090000", "100000")
+                st.link_button("🌅 아침", url_m, use_container_width=True)
+            with c2:
+                url_l = get_bulk_calendar_url(st.session_state.medicines, "점심", "130000", "140000")
+                st.link_button("☀️ 점심", url_l, use_container_width=True)
+            with c3:
+                url_d = get_bulk_calendar_url(st.session_state.medicines, "저녁", "190000", "200000")
+                st.link_button("🌙 저녁", url_d, use_container_width=True)
+                
+            # 2. 종일 등록 섹션
+            st.markdown("---")
+            st.caption("📅 종일 일정으로 등록 (총 1번 저장)")
+            url_all = get_bulk_calendar_url(st.session_state.medicines, "종일 통합", None, None)
+            st.link_button("📦 모든 약 정보 한 번에 등록", url_all, use_container_width=True)
+
+
+    st.divider()
     
     active_drugs = []
     
@@ -359,17 +431,13 @@ with col_right:
             remaining = (drug_end - view_date).days
             
             with st.container(border=True):
-                c1, c2, c3, c4, c5 = st.columns([2.2, 1.5, 1, 0.8, 1.2])
+                c1, c2, c3, c4, = st.columns([2.2, 1.5, 1, 0.8])
                 
                 with c1: st.markdown(f"**{drug['name']}**")
                 with c2: st.caption(f"{drug['time']}")
                 with c3: st.caption(f"📅 {days}일분")
                 with c4: st.markdown(f"**D-{remaining}**")
-                with c5 :
-                    cal_link = get_google_calendar_url(drug)
-                    st.markdown(
-                        f'<a href="{cal_link}" target="_blank" style="font-size: 0.75em; color: white; background-color: #4285F4; padding: 4px 8px; border-radius: 5px; text-decoration: none; display: inline-block;">🔔 알림 등록</a>', 
-                        unsafe_allow_html=True)
+
 
                 st.divider()
                 
