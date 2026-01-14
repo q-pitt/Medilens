@@ -171,3 +171,38 @@ def load_latest_report(user_id, case_id=None):
         return None
     except Exception as e:
         return None
+
+def update_medicines_start_date(user_id, updates):
+    """약물 시작일 일괄 수정
+    updates: {drug_name: new_date_obj}
+    """
+    supabase = init_supabase()
+    if not supabase: return False
+
+    try:
+        # 일괄 업데이트 최적화를 위해, 만약 모든 날짜가 같다면 한번에 처리
+        # (현재 UI는 전체 일괄 변경만 지원하므로 유효함)
+        unique_dates = set(updates.values())
+        if len(unique_dates) == 1:
+            common_date = list(unique_dates)[0]
+            common_date_str = common_date.strftime("%Y-%m-%d")
+            drug_names = list(updates.keys())
+            
+            supabase.table("medicines") \
+                .update({"start_date": common_date_str}) \
+                .eq("user_id", user_id) \
+                .in_("name", drug_names) \
+                .execute()
+        else:
+            # 개별 날짜가 다르다면 루프
+            for name, date_obj in updates.items():
+                date_str = date_obj.strftime("%Y-%m-%d")
+                supabase.table("medicines") \
+                    .update({"start_date": date_str}) \
+                    .eq("user_id", user_id) \
+                    .eq("name", name) \
+                    .execute()
+        return True
+    except Exception as e:
+        st.error(f"날짜 수정 실패: {e}")
+        return False

@@ -41,14 +41,8 @@ def get_random_color():
 
 def update_multiple_medicines_dates(updates):
     """updates: {약이름: 새로운날짜} 형태의 딕셔너리"""
-    if os.path.exists(DB_FILE):
-        df = pd.read_csv(DB_FILE)
-        for drug_name, new_date in updates.items():
-            # CSV 파일 내의 start_date를 선택한 날짜 문자열로 변경
-            df.loc[df['name'] == drug_name, 'start_date'] = new_date.strftime('%Y-%m-%d')
-        df.to_csv(DB_FILE, index=False, encoding='utf-8-sig')
-        return True
-    return False
+    # [수정] CSV -> DB 연동 변경
+    return db.update_medicines_start_date(user_id, updates)
 
 def get_bulk_calendar_url(medicines, slot_name="전체", start_time=None, end_time=None):
     if not medicines: return "#"
@@ -66,13 +60,19 @@ def get_bulk_calendar_url(medicines, slot_name="전체", start_time=None, end_ti
     details = quote("\n".join(details_parts))
     
     # 날짜 및 시간 설정
-    start_date = medicines[0]['start_date'].strftime('%Y%m%d')
+    s_date = medicines[0]['start_date']
+    if isinstance(s_date, str):
+        # "2024-01-01" -> "20240101"
+        start_date_str = s_date.replace("-", "")
+    else:
+        start_date_str = s_date.strftime('%Y%m%d')
+
     if start_time and end_time:
         # 시간대별 등록 (예: 아침 09시)
-        dates = f"{start_date}T{start_time}/{start_date}T{end_time}"
+        dates = f"{start_date_str}T{start_time}/{start_date_str}T{end_time}"
     else:
         # 종일 등록
-        dates = f"{start_date}/{start_date}"
+        dates = f"{start_date_str}/{start_date_str}"
     
     # 반복 설정 (가장 긴 복용 일수 기준)
     max_days = max([int(d.get('days', 3)) for d in medicines])
@@ -449,7 +449,7 @@ with col_right:
                 if update_multiple_medicines_dates(bulk_updates):
                     st.success("모든 약의 시작일이 변경되었습니다!")
                     # 데이터 동기화
-                    st.session_state.medicines = load_data() 
+                    st.session_state.medicines = db.get_medicines(user_id) 
                     st.rerun()
     
     with head_col3:
@@ -460,21 +460,21 @@ with col_right:
             
             # 1. 시간대별 등록 섹션
             st.markdown("---")
-            st.caption("🕒 시간대별 등록 (총 3번 저장)")
-            c1, c2, c3 = st.columns(3)
-            with c1:
-                url_m = get_bulk_calendar_url(st.session_state.medicines, "아침", "090000", "100000")
-                st.link_button("🌅 아침", url_m, use_container_width=True)
-            with c2:
-                url_l = get_bulk_calendar_url(st.session_state.medicines, "점심", "130000", "140000")
-                st.link_button("☀️ 점심", url_l, use_container_width=True)
-            with c3:
-                url_d = get_bulk_calendar_url(st.session_state.medicines, "저녁", "190000", "200000")
-                st.link_button("🌙 저녁", url_d, use_container_width=True)
+            st.caption("🕒 시간대별 등록")
+            
+            # [수정] 중첩 컬럼 제한(Level 3) 회피를 위해 세로 배치로 변경
+            url_m = get_bulk_calendar_url(st.session_state.medicines, "아침", "090000", "100000")
+            st.link_button("🌅 아침 알림 등록", url_m, use_container_width=True)
+            
+            url_l = get_bulk_calendar_url(st.session_state.medicines, "점심", "130000", "140000")
+            st.link_button("☀️ 점심 알림 등록", url_l, use_container_width=True)
+            
+            url_d = get_bulk_calendar_url(st.session_state.medicines, "저녁", "190000", "200000")
+            st.link_button("🌙 저녁 알림 등록", url_d, use_container_width=True)
                 
             # 2. 종일 등록 섹션
             st.markdown("---")
-            st.caption("📅 종일 일정으로 등록 (총 1번 저장)")
+            st.caption("📅 종일 일정으로 등록")
             url_all = get_bulk_calendar_url(st.session_state.medicines, "종일 통합", None, None)
             st.link_button("📦 모든 약 정보 한 번에 등록", url_all, use_container_width=True)
 
