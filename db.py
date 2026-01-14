@@ -55,8 +55,8 @@ def get_medicines(user_id):
         st.error(f"데이터 조회 실패: {e}")
         return []
 
-def add_medicine(user_id, drug_data):
-    """약물 추가"""
+def add_medicine(user_id, drug_data, case_id=None):
+    """약물 추가 (case_id 포함)"""
     supabase = init_supabase()
     if not supabase: return False
 
@@ -64,6 +64,7 @@ def add_medicine(user_id, drug_data):
         # 데이터 정리
         payload = {
             "user_id": user_id,
+            "case_id": case_id,
             "name": drug_data.get("name"),
             "days": int(drug_data.get("days", 3)),
             "start_date": drug_data.get("start_date").strftime("%Y-%m-%d"), # Date -> String
@@ -99,7 +100,7 @@ def delete_medicine(user_id, drug_name):
 # --- 복용 기록 (History) ---
 
 def load_history(user_id):
-    """체크리스트 기록 로드 -> 딕셔너리 형태로 변환 {(날짜, 약이름): True}"""
+    """체크리스트 기록 로드 -> {(날짜, 약이름, 시간): True} (시간 포함)"""
     supabase = init_supabase()
     if not supabase: return {}
     
@@ -108,37 +109,36 @@ def load_history(user_id):
         
         history_dict = {}
         for row in response.data:
-            key = (row['date'], row['drug_name'])
+            t_val = row.get('time', '기본') or '기본'
+            key = (row['date'], row['drug_name'], t_val)
             history_dict[key] = row['is_checked']
         return history_dict
     except Exception as e:
         # st.error(f"기록 조회 실패: {e}") # 로그 너무 많이 찍히면 시끄러우므로 생략 가능
         return {}
 
-def toggle_check(user_id, date_str, drug_name, is_checked):
-    """복용 체크 상태 토글 (Upsert: 있으면 수정, 없으면 추가)"""
+def toggle_check(user_id, date_str, drug_name, time_val, is_checked):
+    """복용 체크 상태 토글 (Upsert: time 구분 포함)"""
     supabase = init_supabase()
     if not supabase: return
     
     try:
-        # 유니크 제약조건(user_id, date, drug_name)이 걸려 있어야 upsert가 완벽히 동작
-        # 여기서는 단순 delete -> insert 또는 select -> update 방식보다 upsert 권장
         payload = {
             "user_id": user_id,
             "date": date_str,
             "drug_name": drug_name,
+            "time": time_val,
             "is_checked": is_checked
         }
-        # on_conflict 컬럼들을 기준으로 upsert 수행
-        # Supabase 테이블 생성 시 (user_id, date, drug_name)을 Unique Key로 잡아줘야 함
-        supabase.table("check_history").upsert(payload, on_conflict="user_id, date, drug_name").execute()
+        # Unique Key가 (user_id, date, drug_name, time)으로 변경됨
+        supabase.table("check_history").upsert(payload, on_conflict="user_id, date, drug_name, time").execute()
     except Exception as e:
         st.error(f"체크 저장 실패: {e}")
 
 # --- 리포트 저장 (Report) ---
 
-def save_report(user_id, report_data):
-    """최신 리포트 저장 (덮어쓰기 또는 로그로 쌓기)"""
+def save_report(user_id, report_data, case_id=None):
+    """최신 리포트 저장 (case_id 포함)"""
     supabase = init_supabase()
     if not supabase: return
 
@@ -146,6 +146,7 @@ def save_report(user_id, report_data):
         # 방법 A: 로그처럼 계속 쌓기
         supabase.table("reports").insert({
             "user_id": user_id,
+            "case_id": case_id,
             "report_json": report_data  # JSONB 컬럼 권장
         }).execute()
     except Exception as e:
