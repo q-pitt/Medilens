@@ -282,6 +282,8 @@ with st.sidebar:
                 if "report" in ai_result:
                     report_data = ai_result["report"]
                     report_data["medicines"] = ai_result.get('drug_analysis', [])
+                    # [Vital Fix] 메타 데이터 누락 방지 (대시보드용)
+                    report_data["meta_analysis"] = ai_result.get('meta_analysis', {})
                     
                     # case_id 전달
                     db.save_report(user_id, report_data, case_id=case_id)
