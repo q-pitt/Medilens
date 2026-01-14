@@ -172,6 +172,44 @@ def load_latest_report(user_id, case_id=None):
     except Exception as e:
         return None
 
+def get_analysis_stats(user_id):
+    """대시보드용 통계 데이터 추출"""
+    supabase = init_supabase()
+    if not supabase: return {}
+    
+    try:
+        # 모든 리포트의 report_json 가져오기
+        response = supabase.table("reports").select("report_json").eq("user_id", user_id).execute()
+        
+        total_reports = len(response.data)
+        risks = {"High": 0, "Medium": 0, "Low": 0}
+        interactions = 0
+        quality_issues = 0
+        
+        for row in response.data:
+            meta = row['report_json'].get('meta_analysis', {})
+            
+            # Risk Count
+            r_level = meta.get('risk_level', 'Low')
+            if r_level in risks: risks[r_level] += 1
+            
+            # Interaction Count
+            interactions += int(meta.get('interaction_count', 0))
+            
+            # Quality Checks (예: flag가 false면 issue)
+            flags = meta.get('quality_flags', {})
+            if not flags.get('api_match_success', True):
+                 quality_issues += 1
+                 
+        return {
+            "total_reports": total_reports,
+            "risk_distribution": risks,
+            "total_interactions": interactions,
+            "quality_issues": quality_issues
+        }
+    except Exception as e:
+        return {}
+
 def update_medicines_start_date(user_id, updates):
     """약물 시작일 일괄 수정
     updates: {drug_name: new_date_obj}

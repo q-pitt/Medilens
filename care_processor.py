@@ -49,11 +49,17 @@ def analyze_with_llm(final_json):
            - 복용 횟수와 간격을 고려하여 최적의 시간표를 만드세요.
            - 기준: 아침(08:00), 점심(13:00), 저녁(19:00), 취침전(22:00).
 
-        3. **[NEW] 종합 리포트 생성 ('report' 객체)**:
-           - "opening_message": 환자의 쾌유를 비는 따뜻하고 감성적인 인사말과 함께, 이번 처방의 전반적인 목적(예: "이번 약은 감기 증상 완화와 염증 치료에 집중되어 있어요")을 요약해주세요.
-           - "schedule_proposal": "아침 식사 후 꼭 드세요" 처럼 구체적이고 실천하기 쉬운 스케줄 제안.
-           - "safety_warnings": "졸음이 올 수 있으니 운전은 피하세요" 같이 생활 밀착형 안전 주의사항.
-           - "medication_tips": 생활 습관, 피해야 할 음식(술, 커피 등), 올바른 보관법 등 실질적 조언.
+        3. **[NEW] 메타 데이터 분석 ('meta_analysis')**:
+           - 대시보드 시각화를 위한 정량적 데이터를 추출하세요.
+           - "risk_level": 상호작용이나 주의사항의 심각도에 따라 "Low", "Medium", "High" 중 하나.
+           - "interaction_count": 발견된 상호작용 또는 중대한 주의사항의 개수 (정수).
+           - "quality_flags": 데이터 신뢰도 태그 (예: {{ "api_match_success": true, "ocr_confidence": "high" }}). API 검색 결과가 있으면 match success.
+
+        4. **종합 리포트 생성 ('report' 객체)**:
+           - "opening_message": 환자의 쾌유를 비는 따뜻하고 감성적인 인사말.
+           - "schedule_proposal": 구체적이고 실천하기 쉬운 스케줄 제안.
+           - "safety_warnings": 운전, 졸음 등 생활 밀착형 안전 주의사항.
+           - "medication_tips": 생활 습관, 피해야 할 음식 등 실질적 조언.
         </task>
         
         <writing_guidelines>
@@ -78,7 +84,12 @@ def analyze_with_llm(final_json):
                 }}
             ],
             "schedule_time_list": ["08:30", "13:30", "19:30"],
-            "archive_keyword": "대표질환명",
+            "meta_analysis": {{
+                "risk_level": "Low",
+                "interaction_count": 0,
+                "evidence_sources": {{ "rules": 0, "api": 1, "llm": 1 }},
+                "quality_flags": {{ "api_match_success": true }}
+            }},
             "report": {{
                 "opening_message": "안녕하세요...",
                 "schedule_proposal": {{ "title": "⏰ 복용 스케줄 제안", "content": "..." }},

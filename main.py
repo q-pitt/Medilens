@@ -98,10 +98,69 @@ st.session_state.check_history = user_history
 
 
 # ==========================================
-# 2. 사이드바: 이미지 업로드
+# 2. 사이드바: 통합 메뉴 (대시보드 vs 비서)
 # ==========================================
 with st.sidebar:
     st.title("🧬 MediLens")
+    
+    # [1] 모드 선택 (여기에 대시보드 추가)
+    app_mode = st.radio("화면 모드", ["🏠 내 복약 비서", "📊 시스템 대시보드"])
+    st.markdown("---")
+
+# ==========================================
+# [PAGE 1] 📊 시스템 대시보드
+# ==========================================
+if app_mode == "📊 시스템 대시보드":
+    st.title("📊 메디렌즈 시스템 대시보드")
+    st.caption("Admin & Analytics Console")
+    
+    # 통계 데이터 로드
+    stats = db.get_analysis_stats(user_id)
+    
+    if not stats:
+        st.info("아직 분석된 데이터가 충분하지 않습니다.")
+    else:
+        # [Top Metrics]
+        c1, c2, c3, c4 = st.columns(4)
+        c1.metric("총 분석 리포트", f"{stats['total_reports']}건")
+        c2.metric("리스크 감지", f"{stats['risk_distribution']['High']}건", delta_color="inverse")
+        c3.metric("상호작용 경고", f"{stats['total_interactions']}회")
+        c4.metric("데이터 품질 이슈", f"{stats['quality_issues']}건", delta_color="off")
+        
+        st.divider()
+        
+        # [Tabs]
+        tab1, tab2 = st.tabs(["🚨 리스크 분석", "📉 데이터 품질"])
+        
+        with tab1:
+            st.subheader("위험도 분포 (Risk Level)")
+            # 간단한 바 차트
+            risk_data = stats['risk_distribution']
+            st.bar_chart(risk_data, color="#FF6B6B")
+            
+            st.info("ℹ️ **High Risk**: 병용 금기나 심각한 부작용 우려가 있는 케이스입니다.")
+            
+        with tab2:
+            st.subheader("데이터 신뢰성 지표")
+            # 품질 이슈 비율 계산
+            import pandas as pd
+            if stats['total_reports'] > 0:
+                quality_score = 100 - (stats['quality_issues'] / stats['total_reports'] * 100)
+            else:
+                quality_score = 0
+                
+            st.progress(int(quality_score), text=f"AI/OCR 평균 신뢰도 점수: {quality_score:.1f}점")
+            st.write("OCR 인식 실패나 API 매칭 실패가 발생하면 점수가 차감됩니다.")
+
+    # 대시보드 모드에서는 여기서 실행 종료
+    st.stop()
+
+# ==========================================
+# [PAGE 2] 🏠 내 복약 비서 (기존 로직)
+# ==========================================
+
+with st.sidebar:
+    # st.title("🧬 MediLens") # 위에서 이미 출력했으므로 제거
     
     # [처방전 그룹핑 및 선택]
     case_groups = {}
