@@ -355,7 +355,7 @@ with col_right:
     active_drugs = []
     
     # DB 데이터를 순회하며 해당 날짜에 먹어야 하는 약 필터링
-    for drug in st.session_state.medicines:
+    for i, drug in enumerate(st.session_state.medicines):
         s_date_str = drug['start_date']
         if isinstance(s_date_str, str):
             drug_start = datetime.datetime.strptime(s_date_str, "%Y-%m-%d").date()
@@ -398,13 +398,14 @@ with col_right:
 
                 for idx, t_val in enumerate(time_list):
                     with cols[idx]:
-                        # Key에 Time 포함 (Unique)
+                        # Key에 Drug Index(i)와 Time Index(idx) 모두 포함하여 절대 중복 방지
                         h_key = (target_date_str, drug['name'], t_val)
                         
                         # DB에서 로드해온 기록 확인
                         is_checked = st.session_state.check_history.get(h_key, False)
                         
-                        if st.checkbox(f"{t_val} 복용", value=is_checked, key=f"cb_{target_date_str}_{drug['name']}_{t_val}"):
+                        # Key에 i (약물 인덱스) 추가
+                        if st.checkbox(f"{t_val} 복용", value=is_checked, key=f"cb_{i}_{target_date_str}_{drug['name']}_{t_val}"):
                             if not is_checked: # False -> True 될 때
                                 db.toggle_check(user_id, target_date_str, drug['name'], t_val, True)
                                 st.session_state.check_history[h_key] = True
