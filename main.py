@@ -4,6 +4,7 @@ import datetime
 import pandas as pd # 여전히 날짜 계산 등에 필요할 수 있음 (또는 제거 가능)
 import os
 import json
+import uuid
 import random
 import re
 from urllib.parse import quote
@@ -125,6 +126,9 @@ with st.sidebar:
                 schedule_list = ai_result.get('schedule_time_list', [])
                 time_str = ", ".join(schedule_list) if schedule_list else "식후 30분"
                 
+                # [Case ID 생성] 이번 처방전 업로드를 하나의 사건(Case)으로 그룹핑
+                case_id = str(uuid.uuid4())
+
                 # 1. 약물 DB 저장 (반복문)
                 count = 0
                 for drug in ai_result.get('drug_analysis', []):
@@ -149,7 +153,8 @@ with st.sidebar:
                         "food": drug.get('food_guide', '특이사항 없음')
                     }
                     
-                    if db.add_medicine(user_id, entry):
+                    # case_id 전달
+                    if db.add_medicine(user_id, entry, case_id=case_id):
                         count += 1
                 
                 # 2. 리포트 DB 저장
@@ -157,7 +162,8 @@ with st.sidebar:
                     report_data = ai_result["report"]
                     report_data["medicines"] = ai_result.get('drug_analysis', [])
                     
-                    db.save_report(user_id, report_data)
+                    # case_id 전달
+                    db.save_report(user_id, report_data, case_id=case_id)
                     st.session_state['last_report'] = report_data
                 
                 st.success(f"{count}개의 약물이 클라우드에 성공적으로 등록되었습니다!")
@@ -353,34 +359,46 @@ with col_right:
             remaining = (drug_end - view_date).days
             
             with st.container(border=True):
-                c1, c2, c3, c4, c5, c6 = st.columns([0.4, 2.2, 1.5, 1, 0.8, 1.2])
-                with c1:
-                    # [체크 로직] DB와 연동
-                    target_date_str = view_date.strftime("%Y-%m-%d")
-                    h_key = (target_date_str, drug['name'])
-                    
-                    is_checked = st.session_state.check_history.get(h_key, False)
-                    
-                    # 체크박스 상태 변경 감지
-                    new_checked = st.checkbox("복용 완료", label_visibility="collapsed", value=is_checked, key=f"cb_{target_date_str}_{drug['name']}")
-                    
-                    if new_checked != is_checked:
-                        # 상태가 변했으면 DB 업데이트
-                        db.toggle_check(user_id, target_date_str, drug['name'], new_checked)
-                        
-                        # 화면 갱신을 위해 세션 즉시 업데이트
-                        st.session_state.check_history[h_key] = new_checked
-                        st.rerun()
-
-                with c2: st.markdown(f"**{drug['name']}**")
-                with c3: st.caption(f"{drug['time']}")
-                with c4: st.caption(f"📅 {days}일분")
-                with c5: st.markdown(f"**D-{remaining}**")
-                with c6 :
+                c1, c2, c3, c4, c5 = st.columns([2.2, 1.5, 1, 0.8, 1.2])
+                
+                with c1: st.markdown(f"**{drug['name']}**")
+                with c2: st.caption(f"{drug['time']}")
+                with c3: st.caption(f"📅 {days}일분")
+                with c4: st.markdown(f"**D-{remaining}**")
+                with c5 :
                     cal_link = get_google_calendar_url(drug)
                     st.markdown(
                         f'<a href="{cal_link}" target="_blank" style="font-size: 0.75em; color: white; background-color: #4285F4; padding: 4px 8px; border-radius: 5px; text-decoration: none; display: inline-block;">🔔 알림 등록</a>', 
                         unsafe_allow_html=True)
+
+                st.divider()
+                
+                # [Time-based Check logic]
+                # 시간 파싱: "아침, 저녁" -> ["아침", "저녁"] / "식후 30분" -> ["식후 30분"]
+                time_list = [t.strip() for t in drug['time'].split(',')]
+                
+                # 한 줄에 여러 체크박스 배치
+                cols = st.columns(len(time_list))
+                target_date_str = view_date.strftime("%Y-%m-%d")
+
+                for idx, t_val in enumerate(time_list):
+                    with cols[idx]:
+                        # Key에 Time 포함 (Unique)
+                        h_key = (target_date_str, drug['name'], t_val)
+                        
+                        # DB에서 로드해온 기록 확인
+                        is_checked = st.session_state.check_history.get(h_key, False)
+                        
+                        if st.checkbox(f"{t_val} 복용", value=is_checked, key=f"cb_{target_date_str}_{drug['name']}_{t_val}"):
+                            if not is_checked: # False -> True 될 때
+                                db.toggle_check(user_id, target_date_str, drug['name'], t_val, True)
+                                st.session_state.check_history[h_key] = True
+                                st.rerun()
+                        else:
+                            if is_checked: # True -> False 될 때
+                                db.toggle_check(user_id, target_date_str, drug['name'], t_val, False)
+                                st.session_state.check_history[h_key] = False
+                                st.rerun()
 
 
     if not active_drugs and st.session_state.medicines:
