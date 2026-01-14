@@ -122,16 +122,10 @@ with st.sidebar:
                         
                     status.update(label="✅ 분석 완료! 데이터베이스에 등록합니다.", state="complete", expanded=False)
 
-                # [Debug] 데이터 확인용
-                with st.expander("🔍 AI 분석 중간 데이터 확인 (Debug, Click to open)"):
-                    st.markdown("### 1. OCR 결과 (글자 인식)")
-                    st.json(ocr_result)
-                    
-                    st.markdown("### 2. LLM 최종 분석 결과")
-                    st.json(ai_result)
-
-                    st.warning("위 데이터에서 'frequency'(횟수)가 정확히 3으로 인식되었는지, 'time_list'가 ['아침','점심','저녁']으로 생성되었는지 확인해주세요.")
-
+                # --- [데이터 변환 및 저장] ---
+                schedule_list = ai_result.get('schedule_time_list', [])
+                time_str = ", ".join(schedule_list) if schedule_list else "식후 30분"
+                
                 # [Case ID 생성] 이번 처방전 업로드를 하나의 사건(Case)으로 그룹핑
                 case_id = str(uuid.uuid4())
 
@@ -145,16 +139,7 @@ with st.sidebar:
                         days = int(raw_days)
                     except:
                         days = 3
-                    
-                    # [시간 파싱] 약물별 개별 스케줄 우선 적용
-                    d_schedule = drug.get('time_list', [])
-                    if not d_schedule:
-                        # 없으면 전체 공용 스케줄 사용
-                        d_schedule = ai_result.get('schedule_time_list', ["식후 30분"])
-                    
-                    # 리스트 -> 문자열 변환 ("아침, 점심, 저녁")
-                    time_str = ", ".join(d_schedule)
-
+                  
                     # DB 저장용 딕셔너리 구성
                     entry = {
                         "name": drug_name,
@@ -355,7 +340,7 @@ with col_right:
     active_drugs = []
     
     # DB 데이터를 순회하며 해당 날짜에 먹어야 하는 약 필터링
-    for i, drug in enumerate(st.session_state.medicines):
+    for drug in st.session_state.medicines:
         s_date_str = drug['start_date']
         if isinstance(s_date_str, str):
             drug_start = datetime.datetime.strptime(s_date_str, "%Y-%m-%d").date()
@@ -398,14 +383,13 @@ with col_right:
 
                 for idx, t_val in enumerate(time_list):
                     with cols[idx]:
-                        # Key에 Drug Index(i)와 Time Index(idx) 모두 포함하여 절대 중복 방지
+                        # Key에 Time 포함 (Unique)
                         h_key = (target_date_str, drug['name'], t_val)
                         
                         # DB에서 로드해온 기록 확인
                         is_checked = st.session_state.check_history.get(h_key, False)
                         
-                        # Key에 i (약물 인덱스) 추가
-                        if st.checkbox(f"{t_val} 복용", value=is_checked, key=f"cb_{i}_{target_date_str}_{drug['name']}_{t_val}"):
+                        if st.checkbox(f"{t_val} 복용", value=is_checked, key=f"cb_{target_date_str}_{drug['name']}_{t_val}"):
                             if not is_checked: # False -> True 될 때
                                 db.toggle_check(user_id, target_date_str, drug['name'], t_val, True)
                                 st.session_state.check_history[h_key] = True
