@@ -55,8 +55,8 @@ def get_medicines(user_id):
         st.error(f"데이터 조회 실패: {e}")
         return []
 
-def add_medicine(user_id, drug_data):
-    """약물 추가"""
+def add_medicine(user_id, drug_data, case_id=None):
+    """약물 추가 (case_id 포함)"""
     supabase = init_supabase()
     if not supabase: return False
 
@@ -64,6 +64,7 @@ def add_medicine(user_id, drug_data):
         # 데이터 정리
         payload = {
             "user_id": user_id,
+            "case_id": case_id,
             "name": drug_data.get("name"),
             "days": int(drug_data.get("days", 3)),
             "start_date": drug_data.get("start_date").strftime("%Y-%m-%d"), # Date -> String
@@ -129,15 +130,15 @@ def toggle_check(user_id, date_str, drug_name, time_val, is_checked):
             "time": time_val,
             "is_checked": is_checked
         }
-        # Unique Key가 (user_id, date, drug_name, time)으로 변경된 스키마 가정
+        # Unique Key가 (user_id, date, drug_name, time)으로 변경됨
         supabase.table("check_history").upsert(payload, on_conflict="user_id, date, drug_name, time").execute()
     except Exception as e:
         st.error(f"체크 저장 실패: {e}")
 
 # --- 리포트 저장 (Report) ---
 
-def save_report(user_id, report_data):
-    """최신 리포트 저장 (덮어쓰기 또는 로그로 쌓기)"""
+def save_report(user_id, report_data, case_id=None):
+    """최신 리포트 저장 (case_id 포함)"""
     supabase = init_supabase()
     if not supabase: return
 
@@ -145,24 +146,25 @@ def save_report(user_id, report_data):
         # 방법 A: 로그처럼 계속 쌓기
         supabase.table("reports").insert({
             "user_id": user_id,
+            "case_id": case_id,
             "report_json": report_data  # JSONB 컬럼 권장
         }).execute()
     except Exception as e:
         st.error(f"리포트 저장 실패: {e}")
 
-def load_latest_report(user_id):
-    """가장 최근 리포트 불러오기"""
+def load_latest_report(user_id, case_id=None):
+    """가장 최근 리포트 불러오기 (case_id 옵션)"""
     supabase = init_supabase()
     if not supabase: return None
 
     try:
-        # created_at 내림차순 정렬 후 1개만 가져오기
-        response = supabase.table("reports") \
-            .select("report_json") \
-            .eq("user_id", user_id) \
-            .order("created_at", desc=True) \
-            .limit(1) \
-            .execute()
+        query = supabase.table("reports").select("report_json").eq("user_id", user_id)
+        
+        # 특정 케이스만 조회
+        if case_id and case_id != "all":
+             query = query.eq("case_id", case_id)
+             
+        response = query.order("created_at", desc=True).limit(1).execute()
             
         if response.data:
             return response.data[0]['report_json']

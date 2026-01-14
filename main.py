@@ -64,16 +64,17 @@ def get_google_calendar_url(drug):
 # --- 데이터 로드 (DB 연동) ---
 # 세션 상태 초기화 (또는 리프레시)
 user_medicines = db.get_medicines(user_id)
-st.session_state.medicines = user_medicines
+st.session_state.medicines = user_medicines  # 전체 데이터
 
 user_history = db.load_history(user_id)
 st.session_state.check_history = user_history
 
 # 리포트 로드 (세션에 없으면 DB에서 최신 조회)
-if 'last_report' not in st.session_state:
-    latest_report = db.load_latest_report(user_id)
-    if latest_report:
-        st.session_state['last_report'] = latest_report
+# 이 부분은 아래에서 selected_case에 따라 로드하도록 변경됨
+# if 'last_report' not in st.session_state:
+#     latest_report = db.load_latest_report(user_id)
+#     if latest_report:
+#         st.session_state['last_report'] = latest_report
 
 
 # ==========================================
@@ -81,8 +82,36 @@ if 'last_report' not in st.session_state:
 # ==========================================
 with st.sidebar:
     st.title("🧬 MediLens")
-    st.subheader("📸 처방전 업로드")
-    uploaded_file = st.file_uploader("이미지를 선택하세요", type=['png', 'jpg', 'jpeg'])
+    
+    # [처방전 그룹핑 및 선택]
+    case_groups = {}
+    for med in user_medicines:
+        c_id = med.get('case_id', 'Unknown')
+        if c_id not in case_groups:
+            case_groups[c_id] = []
+        case_groups[c_id].append(med)
+    
+    # 선택 옵션 생성 (최신순 등 정렬 가능)
+    # 예: "Case 1 (3개 약물)", "Case 2 (1개 약물)"
+    case_options = ["전체 보기"] + list(case_groups.keys())
+    
+    # 케이스 ID를 좀 더 읽기 좋게(날짜 등) 표시하면 좋지만, 지금은 ID/약물수로만 표시
+    def format_func(option):
+        if option == "전체 보기": return "📂 전체 약물 보기"
+        cnt = len(case_groups[option])
+        # 약물 중 첫 번째 약의 시작 날짜를 대표로 표시
+        first_date = case_groups[option][0].get('start_date', '?')
+        return f"📄 처방전 ({first_date} 접수, {cnt}개 약물)"
+
+    # 사이드바 하단 리스트 위치 (새로고침 위)
+    st.subheader("📁 내 처방전 목록")
+    selected_case = st.selectbox("확인할 처방전을 선택하세요", case_options, format_func=format_func)
+    
+    st.divider()
+
+    # 업로드 기능
+    st.subheader("📸 새 처방전 추가")
+    uploaded_file = st.file_uploader("이미지를 업로드하세요", type=['png', 'jpg', 'jpeg'])
     
     if uploaded_file:
         st.image(uploaded_file, caption="업로드된 이미지", use_container_width=True)
@@ -143,7 +172,16 @@ with st.sidebar:
                         days = int(raw_days)
                     except:
                         days = 3
-                  
+                    
+                    # [시간 파싱] 약물별 개별 스케줄 우선 적용
+                    d_schedule = drug.get('time_list', [])
+                    if not d_schedule:
+                        # 없으면 전체 공용 스케줄 사용
+                        d_schedule = ai_result.get('schedule_time_list', ["식후 30분"])
+                    
+                    # 리스트 -> 문자열 변환 ("아침, 점심, 저녁")
+                    time_str = ", ".join(d_schedule)
+
                     # DB 저장용 딕셔너리 구성
                     entry = {
                         "name": drug_name,
@@ -157,8 +195,8 @@ with st.sidebar:
                         "food": drug.get('food_guide', '특이사항 없음')
                     }
                     
-                    # case_id 전달 (삭제됨: DB 스키마 원복으로 인해 제거)
-                    if db.add_medicine(user_id, entry):
+                    # case_id 전달
+                    if db.add_medicine(user_id, entry, case_id=case_id):
                         count += 1
                 
                 # 2. 리포트 DB 저장
@@ -166,8 +204,8 @@ with st.sidebar:
                     report_data = ai_result["report"]
                     report_data["medicines"] = ai_result.get('drug_analysis', [])
                     
-                    # case_id 전달 (삭제됨)
-                    db.save_report(user_id, report_data)
+                    # case_id 전달
+                    db.save_report(user_id, report_data, case_id=case_id)
                     st.session_state['last_report'] = report_data
                 
                 st.success(f"{count}개의 약물이 클라우드에 성공적으로 등록되었습니다!")
@@ -178,20 +216,36 @@ with st.sidebar:
                 st.error(f"처리 중 오류가 발생했습니다: {e}")
 
     # 사이드바 하단
-    for _ in range(10): st.sidebar.write("")
+    for _ in range(5): st.sidebar.write("")
     st.divider()
     
     # 데이터 초기화 (전체 삭제 기능은 복잡하므로 개별 삭제 권장, 일단 비활성화 or 전체 삭제 구현)
     if st.sidebar.button("DB 새로고침", use_container_width=True):
+        st.cache_resource.clear()
         st.rerun()
+
+# ----------------------------------------------------
+# [Main Logic] 선택된 Case에 따라 데이터 필터링
+# ----------------------------------------------------
+if selected_case == "전체 보기":
+    filtered_medicines = st.session_state.medicines
+    # 전체 보기일 때는 가장 최신 리포트를 보여주거나, 리포트를 숨길 수 있음.
+    # 여기서는 가장 최신(all)로 로드
+    current_report = db.load_latest_report(user_id, case_id=None)
+else:
+    filtered_medicines = case_groups[selected_case]
+    # 선택된 케이스의 리포트 로드
+    current_report = db.load_latest_report(user_id, case_id=selected_case)
+
+st.session_state['last_report'] = current_report
 
 
 # ==========================================
-# 3. 달력 이벤트 구성
+# 3. 달력 이벤트 구성 (filtered_medicines 기준)
 # ==========================================
 calendar_events = []
 
-for drug in st.session_state.medicines:
+for drug in filtered_medicines:
     # DB에서 가져온 날짜는 String일 수 있음
     s_date_str = drug['start_date']
     if isinstance(s_date_str, str):
@@ -240,12 +294,15 @@ for drug in st.session_state.medicines:
 st.title("💊 메디렌즈 - AI 복약 스케줄러")
 st.divider()
 
+if selected_case != "전체 보기":
+    st.caption(f"현재 보고 있는 처방전: {selected_case}")
+
 st.subheader("📝 종합 복약 리포트")
 st.write("사용자의 모든 처방 약을 분석하여 종합 가이드를 생성합니다.")
 
 if 'last_report' not in st.session_state or not st.session_state['last_report']:
-    if st.session_state.medicines:
-        st.info("💡 등록된 리포트가 없습니다.")
+    if filtered_medicines:
+        st.info("💡 등록된 리포트가 없습니다. (또는 이전 버전 데이터)")
     else:
         st.info("비어있는 처방전입니다. 사이드바에서 약을 먼저 등록해주세요.")
         
@@ -262,6 +319,8 @@ if 'last_report' in st.session_state and st.session_state['last_report']:
 
         # 2. 약물별 상세 카드
         st.subheader("💊 처방 약 설명과 복용법")
+        # 리포트에 있는 약물 정보가 현재 필터된 약물 목록과 일치하지 않을 수 있음 (전체 리포트일 경우)
+        # 하지만 여기서 보여주는건 리포트 내용이므로 그대로 출력
         for med in report.get("medicines", []):
             with st.expander(f"**{med.get('name', '약품')}** 상세 정보", expanded=True):
                 
@@ -353,7 +412,8 @@ with col_right:
     active_drugs = []
     
     # DB 데이터를 순회하며 해당 날짜에 먹어야 하는 약 필터링
-    for i, drug in enumerate(st.session_state.medicines):
+    # [수정] filtered_medicines 사용
+    for i, drug in enumerate(filtered_medicines):
         s_date_str = drug['start_date']
         if isinstance(s_date_str, str):
             drug_start = datetime.datetime.strptime(s_date_str, "%Y-%m-%d").date()
@@ -414,7 +474,7 @@ with col_right:
                                 st.rerun()
 
 
-    if not active_drugs and st.session_state.medicines:
+    if not active_drugs and filtered_medicines:
         st.info("해당 날짜에는 복용할 약이 없습니다.")
 
 # ==========================================
