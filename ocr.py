@@ -4,7 +4,6 @@ from google import genai
 from google.genai import types
 import PIL.Image
 import json
-import re
 
 def run_ocr(image_file):
     """

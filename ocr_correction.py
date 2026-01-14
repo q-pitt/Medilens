@@ -79,53 +79,81 @@ def split_name_and_dosage(text):
          return name_only, dosage
     return text, ""
 
-def correct_ocr_data(ocr_list):
+def correct_drug_names(ocr_list):
     """
-    [입력] OCR 결과 리스트 (딕셔너리 리스트)
-    [출력] 보정된 리스트
+    OCR 결과 리스트를 받아 오타를 보정한 리스트와
+    보정 메트릭(수정 거리 등)을 함께 반환합니다.
     """
-    # 1. DB 로딩 (캐싱됨)
     sym_spell, jamo_to_original = load_symspell_db()
     
     if not sym_spell:
-        return ocr_list # DB 없으면 원본 반환
-
+        # DB 로드 실패 시 원본 그대로 + 빈 통계 반환
+        return ocr_list, {"total_edits": 0, "corrected_count": 0} 
+        
     corrected_list = []
     
+    # [Metrics] 통계 집계용 변수
+    total_edits = 0
+    corrected_count = 0
+    change_logs = [] # [Evidence] 변경 증거 수집
+    
     for item in ocr_list:
-        new_item = item.copy() # 원본 보존
-        input_text = item.get('medicine_name', '')
-        
-        if not input_text:
-            corrected_list.append(new_item)
+        raw_name = item.get('medicine_name', '').strip()
+        if not raw_name:
+            corrected_list.append(item)
             continue
             
-        # 보정 로직
-        normalized_input = normalize_unit(input_text)
-        input_jamo = decompose_text(normalized_input)
+        # 1. 단위 정규화 및 자모 분해
+        norm_name = normalize_unit(raw_name)
+        search_term = decompose_text(norm_name)
         
-        suggestions = sym_spell.lookup(input_jamo, Verbosity.CLOSEST, max_edit_distance=2)
+        # 2. SymSpell 검색
+        suggestions = sym_spell.lookup(search_term, Verbosity.CLOSEST, max_edit_distance=2)
         
-        final_text = convert_to_api_format(re.sub(r'\s+', '', input_text))
+        # [Safety Check] 기본값: 원본 유지
+        final_name = raw_name
+        distance = 0
+        is_corrected = False
         
         if suggestions:
-            best_jamo = suggestions[0].term
-            if best_jamo in jamo_to_original:
-                corrected_word = jamo_to_original[best_jamo]
-                # 숫자 일치 확인
-                if check_number_match(input_text, corrected_word):
-                    final_text = corrected_word
-        
-        new_item['corrected_medicine_name'] = final_text
-        
-        # 힌트 생성
-        base, dosage = split_name_and_dosage(final_text)
-        new_item['api_search_hint'] = {
-            "full_query": final_text,
-            "base_query": base,
-            "dosage": dosage
-        }
+            best_sug = suggestions[0]
+            corrected_term = best_sug.term
+            dist = best_sug.distance 
+            
+            # 원래 이름으로 복원
+            candidate_name = jamo_to_original.get(corrected_term, raw_name)
+            
+            # [CRITICAL] 숫자 일치 여부 검증 (dosge mismatch 방지)
+            if check_number_match(raw_name, candidate_name):
+                final_name = candidate_name
+                distance = dist
+                if distance > 0:
+                    is_corrected = True
+            else:
+                # 숫자 불일치 시 보정 거부 (안전 제일)
+                pass
+
+        # 결과 저장
+        new_item = item.copy()
+        new_item['corrected_medicine_name'] = final_name
+        new_item['original_medicine_name'] = raw_name     
         
         corrected_list.append(new_item)
         
-    return corrected_list
+        # [Metrics] 집계
+        if is_corrected:
+            total_edits += distance
+            corrected_count += 1
+            change_logs.append({
+                "before": raw_name,
+                "after": final_name
+            })
+            
+    # 통계 딕셔너리 생성
+    stats = {
+        "total_edits": total_edits,      # 총 수정된 글자 수
+        "corrected_count": corrected_count, # 수정된 약물 개수
+        "change_examples": change_logs[:5]  # [Evidence] 실제 변경 사례 (최대 5개)
+    }
+            
+    return corrected_list, stats

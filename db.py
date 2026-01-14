@@ -1,8 +1,6 @@
 import streamlit as st
 from supabase import create_client, Client
-import datetime
 import uuid
-import json
 
 # Supabase 초기화 함수
 # secrets.toml 파일에 SUPABASE_URL과 SUPABASE_KEY가 있어야 합니다.
@@ -22,8 +20,7 @@ def get_user_id():
     """사용자 식별을 위한 UUID 생성 및 조회 (URL 파라미터 기반 영속성 확보)"""
     # 1. URL 파라미터에서 user_id 확인
     query_params = st.query_params
-    
-    # query_params가 딕셔너리처럼 동작 (Streamlit 최신 버전)
+
     url_user_id = query_params.get("user_id", None)
     
     # 2. URL에 ID가 있으면 그걸 사용 (세션에도 동기화)
@@ -114,7 +111,7 @@ def load_history(user_id):
             history_dict[key] = row['is_checked']
         return history_dict
     except Exception as e:
-        # st.error(f"기록 조회 실패: {e}") # 로그 너무 많이 찍히면 시끄러우므로 생략 가능
+        # st.error(f"기록 조회 실패: {e}") # 로그 너무 많이 찍히면 시끄러움
         return {}
 
 def toggle_check(user_id, date_str, drug_name, time_val, is_checked):
@@ -136,9 +133,20 @@ def toggle_check(user_id, date_str, drug_name, time_val, is_checked):
         st.error(f"체크 저장 실패: {e}")
 
 # --- 리포트 저장 (Report) ---
+def get_user_reports(user_id):
+    """사용자의 모든 리포트 이력 조회"""
+    supabase = init_supabase()
+    if not supabase: return []
+    try:
+        # created_at 기준 내림차순 정렬
+        res = supabase.table("reports").select("*").eq("user_id", user_id).order("created_at", desc=True).execute()
+        return res.data
+    except Exception as e:
+        print(f"리포트 조회 실패: {e}")
+        return []
 
 def save_report(user_id, report_data, case_id=None):
-    """최신 리포트 저장 (case_id 포함)"""
+    """AI 리포트 DB 저장"""
     supabase = init_supabase()
     if not supabase: return
 
@@ -219,7 +227,6 @@ def update_medicines_start_date(user_id, updates):
 
     try:
         # 일괄 업데이트 최적화를 위해, 만약 모든 날짜가 같다면 한번에 처리
-        # (현재 UI는 전체 일괄 변경만 지원하므로 유효함)
         unique_dates = set(updates.values())
         if len(unique_dates) == 1:
             common_date = list(unique_dates)[0]
