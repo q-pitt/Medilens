@@ -116,6 +116,10 @@ with st.sidebar:
                     st.write("🧠 AI가 복약 지도를 작성 중입니다...")
                     ai_result = care_processor.analyze_with_llm(final_json)
                     
+                    # [DEBUG] 세션에 중간 데이터 저장
+                    st.session_state['debug_ocr'] = ocr_result
+                    st.session_state['debug_ai'] = ai_result
+                    
                     if "error" in ai_result:
                         st.error(ai_result["error"])
                         st.stop()
@@ -153,8 +157,8 @@ with st.sidebar:
                         "food": drug.get('food_guide', '특이사항 없음')
                     }
                     
-                    # case_id 전달
-                    if db.add_medicine(user_id, entry, case_id=case_id):
+                    # case_id 전달 (삭제됨: DB 스키마 원복으로 인해 제거)
+                    if db.add_medicine(user_id, entry):
                         count += 1
                 
                 # 2. 리포트 DB 저장
@@ -162,8 +166,8 @@ with st.sidebar:
                     report_data = ai_result["report"]
                     report_data["medicines"] = ai_result.get('drug_analysis', [])
                     
-                    # case_id 전달
-                    db.save_report(user_id, report_data, case_id=case_id)
+                    # case_id 전달 (삭제됨)
+                    db.save_report(user_id, report_data)
                     st.session_state['last_report'] = report_data
                 
                 st.success(f"{count}개의 약물이 클라우드에 성공적으로 등록되었습니다!")
@@ -201,9 +205,18 @@ for drug in st.session_state.medicines:
         current_date = start_date + datetime.timedelta(days=i)
         current_date_str = current_date.strftime("%Y-%m-%d")
         
-        # 키 형식 주의: (날짜문자열, 약이름)
-        h_key = (current_date_str, drug['name'])
-        is_checked = st.session_state.check_history.get(h_key, False)
+        # [달력 체크 확인] 약물의 모든 복용 시간(아침, 점심 등)을 완료했는지 검사
+        time_list = [t.strip() for t in drug.get('time', '').split(',') if t.strip()]
+        if not time_list: time_list = ['기본']
+
+        all_checked = True
+        for t_val in time_list:
+            h_key = (current_date_str, drug['name'], t_val)
+            if not st.session_state.check_history.get(h_key, False):
+                all_checked = False
+                break
+        
+        is_checked = all_checked
         
         display_title = f"✅ {drug['name']}" if is_checked else drug['name']
         base_color = drug.get('color', '#3D9DF3')
@@ -340,7 +353,7 @@ with col_right:
     active_drugs = []
     
     # DB 데이터를 순회하며 해당 날짜에 먹어야 하는 약 필터링
-    for drug in st.session_state.medicines:
+    for i, drug in enumerate(st.session_state.medicines):
         s_date_str = drug['start_date']
         if isinstance(s_date_str, str):
             drug_start = datetime.datetime.strptime(s_date_str, "%Y-%m-%d").date()
@@ -389,7 +402,7 @@ with col_right:
                         # DB에서 로드해온 기록 확인
                         is_checked = st.session_state.check_history.get(h_key, False)
                         
-                        if st.checkbox(f"{t_val} 복용", value=is_checked, key=f"cb_{target_date_str}_{drug['name']}_{t_val}"):
+                        if st.checkbox(f"{t_val} 복용", value=is_checked, key=f"cb_{i}_{target_date_str}_{drug['name']}_{t_val}"):
                             if not is_checked: # False -> True 될 때
                                 db.toggle_check(user_id, target_date_str, drug['name'], t_val, True)
                                 st.session_state.check_history[h_key] = True
@@ -403,3 +416,20 @@ with col_right:
 
     if not active_drugs and st.session_state.medicines:
         st.info("해당 날짜에는 복용할 약이 없습니다.")
+
+# ==========================================
+# [DEBUG] 하단 데이터 검증 영역
+# ==========================================
+st.divider()
+with st.expander("🛠️ 개발자용 데이터 확인 (Debug)", expanded=False):
+    st.markdown("### 1. OCR 인식 결과")
+    if 'debug_ocr' in st.session_state:
+        st.json(st.session_state['debug_ocr'])
+    else:
+        st.info("OCR 데이터가 없습니다.")
+
+    st.markdown("### 2. AI 분석 결과")
+    if 'debug_ai' in st.session_state:
+        st.json(st.session_state['debug_ai'])
+    else:
+        st.info("AI 분석 데이터가 없습니다.")
