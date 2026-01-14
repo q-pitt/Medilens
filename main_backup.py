@@ -1,13 +1,12 @@
 import streamlit as st
 from streamlit_calendar import calendar
 import datetime
-import pandas as pd # 여전히 날짜 계산 등에 필요할 수 있음 (또는 제거 가능)
+import pandas as pd
 import os
 import json
 import random
 import re
 from urllib.parse import quote
-import time
 
 # --- [AI 분석 모듈 임포트] ---
 import ocr
@@ -15,20 +14,48 @@ import ocr_correction
 import api_search
 import care_processor
 
-# --- [DB 모듈 임포트] ---
-import db
-
 # ==========================================
 # 1. 초기 설정 및 데이터 관리
 # ==========================================
 st.set_page_config(page_title="메디렌즈", page_icon="💊", layout="wide")
 
+DB_FILE = "medilens_db.csv"
+HISTORY_FILE = "check_history.csv" 
 today = datetime.date.today()
 
-# 사용자 식별 (먼저 가져옴)
-user_id = db.get_user_id()
+# 데이터 로드 함수
+def load_data():
+    if os.path.exists(DB_FILE):
+        df = pd.read_csv(DB_FILE)
+        df['start_date'] = pd.to_datetime(df['start_date']).dt.date
+        return df.to_dict('records')
+    return []
 
-# --- 헬퍼 함수 ---
+def load_history():
+    if os.path.exists(HISTORY_FILE):
+        df_h = pd.read_csv(HISTORY_FILE)
+        return dict(zip(zip(df_h['date'].astype(str), df_h['name']), df_h['checked']))
+    return {}
+
+# 데이터 저장 함수
+def save_history():
+    history_list = []
+    for (date, name), checked in st.session_state.check_history.items():
+        history_list.append({"date": date, "name": name, "checked": checked})
+    if history_list:
+        pd.DataFrame(history_list).to_csv(HISTORY_FILE, index=False, encoding='utf-8-sig')
+
+def delete_medicine(drug_name):
+    if os.path.exists(DB_FILE):
+        try:
+            df = pd.read_csv(DB_FILE)
+        except:
+            df = pd.read_csv(DB_FILE, encoding='cp949')
+            
+        new_df = df[df['name'] != drug_name]
+        new_df.to_csv(DB_FILE, index=False, encoding='utf-8-sig')
+        return True
+    return False
 
 def get_random_color():
     """약 구분을 위한 랜덤 색상 부여"""
@@ -40,40 +67,26 @@ def get_random_color():
 
 def get_google_calendar_url(drug):
     base_url = "https://www.google.com/calendar/render?action=TEMPLATE"
-    # 이름에서 괄호 제거
+    # 이름에서 괄호 제거 (예: 타이레놀(80mg) -> 타이레놀)
     clean_name = re.split(r'\(', drug['name'])[0].strip()
     title = quote(f"💊 [메디렌즈] {clean_name} 복용")
     
+    # 상세 정보 구성
     details_text = f"용법: {drug.get('usage', '-')}\n효능: {drug.get('efficacy', '-')}\n주의사항: {drug.get('info', '-')}"
     details = quote(details_text)
     
-    # 날짜 문자열 처리
-    s_date_str = drug['start_date'] # DB에서 가져온건 문자열일 수 있음
-    if isinstance(s_date_str, str):
-        s_date_obj = datetime.datetime.strptime(s_date_str, "%Y-%m-%d").date()
-    else:
-        s_date_obj = s_date_str
-
-    start_date = s_date_obj.strftime('%Y%m%d')
-    end_date = s_date_obj.strftime('%Y%m%d')
+    # 날짜 및 반복 설정
+    start_date = drug['start_date'].strftime('%Y%m%d')
+    end_date = drug['start_date'].strftime('%Y%m%d')
     recur = quote(f"RRULE:FREQ=DAILY;COUNT={drug['days']}")
     
     return f"{base_url}&text={title}&details={details}&dates={start_date}/{end_date}&recur={recur}"
 
-# --- 데이터 로드 (DB 연동) ---
-# 세션 상태 초기화 (또는 리프레시)
-user_medicines = db.get_medicines(user_id)
-st.session_state.medicines = user_medicines
-
-user_history = db.load_history(user_id)
-st.session_state.check_history = user_history
-
-# 리포트 로드 (세션에 없으면 DB에서 최신 조회)
-if 'last_report' not in st.session_state:
-    latest_report = db.load_latest_report(user_id)
-    if latest_report:
-        st.session_state['last_report'] = latest_report
-
+# 세션 상태 초기화
+if 'medicines' not in st.session_state:
+    st.session_state.medicines = load_data()
+if 'check_history' not in st.session_state:
+    st.session_state.check_history = load_history()
 
 # ==========================================
 # 2. 사이드바: 이미지 업로드
@@ -122,25 +135,26 @@ with st.sidebar:
                     status.update(label="✅ 분석 완료! 데이터베이스에 등록합니다.", state="complete", expanded=False)
 
                 # --- [데이터 변환 및 저장] ---
+                new_data = []
+                # colors = ["#FF4B4B", "#2ECC71", "#3D9DF3", "#FFA500", "#9B59B6"]
                 schedule_list = ai_result.get('schedule_time_list', [])
                 time_str = ", ".join(schedule_list) if schedule_list else "식후 30분"
                 
-                # 1. 약물 DB 저장 (반복문)
-                count = 0
-                for drug in ai_result.get('drug_analysis', []):
+                # 1. 약물 분석 정보 저장
+                for idx, drug in enumerate(ai_result.get('drug_analysis', [])):
                     drug_name = drug.get('name', '알 수 없음')
                     
+                    # [수정] 처방 일수 동적 적용 (기본값 3일)
                     try:
                         raw_days = drug.get('days', 3)
                         days = int(raw_days)
                     except:
                         days = 3
                   
-                    # DB 저장용 딕셔너리 구성
                     entry = {
                         "name": drug_name,
                         "days": days,
-                        "color": get_random_color(),
+                        "color": get_random_color(), # 랜덤 파스텔톤 색상 적용
                         "time": time_str, 
                         "start_date": today, 
                         "efficacy": drug.get('efficacy', '-'), 
@@ -148,33 +162,64 @@ with st.sidebar:
                         "info": drug.get('caution', '특이사항 없음'), 
                         "food": drug.get('food_guide', '특이사항 없음')
                     }
+                    new_data.append(entry)
+
+                if os.path.exists(DB_FILE):
+                    df_old = pd.read_csv(DB_FILE)
+                    df_new = pd.DataFrame(new_data)
+                    df_combined = pd.concat([df_old, df_new], ignore_index=True)
+                else:
+                    df_combined = pd.DataFrame(new_data)
                     
-                    if db.add_medicine(user_id, entry):
-                        count += 1
+                df_combined.to_csv(DB_FILE, index=False, encoding='utf-8-sig')
                 
-                # 2. 리포트 DB 저장
+                st.session_state.medicines = load_data()
+
+                # 2. 리포트 즉시 저장 (One-Shot 통합)
                 if "report" in ai_result:
                     report_data = ai_result["report"]
+                    # 리포트 카드에 표시할 약 정보도 함께 담음 (중복 방지 위해 참조)
                     report_data["medicines"] = ai_result.get('drug_analysis', [])
-                    
-                    db.save_report(user_id, report_data)
                     st.session_state['last_report'] = report_data
-                
-                st.success(f"{count}개의 약물이 클라우드에 성공적으로 등록되었습니다!")
+                else:
+                    # 리포트가 없으면 지움
+                    if 'last_report' in st.session_state:
+                         del st.session_state['last_report']
+
+                st.success(f"{len(new_data)}개의 약물이 성공적으로 등록되었습니다!")
                 time.sleep(1)
                 st.rerun()
 
             except Exception as e:
                 st.error(f"처리 중 오류가 발생했습니다: {e}")
 
-    # 사이드바 하단
+    # 사이드바 하단 공백
     for _ in range(10): st.sidebar.write("")
     st.divider()
     
-    # 데이터 초기화 (전체 삭제 기능은 복잡하므로 개별 삭제 권장, 일단 비활성화 or 전체 삭제 구현)
-    if st.sidebar.button("DB 새로고침", use_container_width=True):
-        st.rerun()
+    # 데이터 초기화 로직
+    if "delete_confirm" not in st.session_state:
+        st.session_state.delete_confirm = False
 
+    if not st.session_state.delete_confirm:
+        if st.sidebar.button("🗑️ 데이터 전체 초기화", use_container_width=True):
+            st.session_state.delete_confirm = True
+            st.rerun()
+    else:
+        st.sidebar.warning("⚠️ 정말 모든 데이터를 삭제할까요?")
+        col_yes, col_no = st.sidebar.columns(2)
+        with col_yes:
+            if st.button("예", use_container_width=True):
+                if os.path.exists(DB_FILE): os.remove(DB_FILE)
+                if os.path.exists(HISTORY_FILE): os.remove(HISTORY_FILE)
+                st.session_state.medicines = []
+                st.session_state.check_history = {}
+                st.session_state.delete_confirm = False
+                st.rerun()
+        with col_no:
+            if st.button("아니오", use_container_width=True):
+                st.session_state.delete_confirm = False
+                st.rerun()
 
 # ==========================================
 # 3. 달력 이벤트 구성
@@ -182,20 +227,10 @@ with st.sidebar:
 calendar_events = []
 
 for drug in st.session_state.medicines:
-    # DB에서 가져온 날짜는 String일 수 있음
-    s_date_str = drug['start_date']
-    if isinstance(s_date_str, str):
-        start_date = datetime.datetime.strptime(s_date_str, "%Y-%m-%d").date()
-    else:
-        start_date = s_date_str
-
-    days = int(drug['days'])
-    
-    for i in range(days):
-        current_date = start_date + datetime.timedelta(days=i)
+    for i in range(int(drug['days'])):
+        current_date = drug['start_date'] + datetime.timedelta(days=i)
         current_date_str = current_date.strftime("%Y-%m-%d")
         
-        # 키 형식 주의: (날짜문자열, 약이름)
         h_key = (current_date_str, drug['name'])
         is_checked = st.session_state.check_history.get(h_key, False)
         
@@ -226,14 +261,15 @@ st.write("사용자의 모든 처방 약을 분석하여 종합 가이드를 생
 
 if 'last_report' not in st.session_state or not st.session_state['last_report']:
     if st.session_state.medicines:
-        st.info("💡 등록된 리포트가 없습니다.")
+        st.info("💡 사이드바에서 처방전을 업로드하면 AI 상세 리포트가 이곳에 표시됩니다.")
     else:
-        st.info("비어있는 처방전입니다. 사이드바에서 약을 먼저 등록해주세요.")
+        st.info("비어있는 처방전입니다. 약을 먼저 등록해주세요.")
         
 # [리포트 표시]
 if 'last_report' in st.session_state and st.session_state['last_report']:
     report = st.session_state['last_report']
     
+    # 에러 체크
     if isinstance(report, str) or "error" in report:
         st.error(report if isinstance(report, str) else report.get("error"))
     else:
@@ -241,11 +277,12 @@ if 'last_report' in st.session_state and st.session_state['last_report']:
         st.info(report.get("opening_message", "안녕하세요."))
         st.divider()
 
-        # 2. 약물별 상세 카드
+        # 2. 약물별 상세 카드 (리포트 데이터를 기반으로 표시)
         st.subheader("💊 처방 약 설명과 복용법")
         for med in report.get("medicines", []):
             with st.expander(f"**{med.get('name', '약품')}** 상세 정보", expanded=True):
                 
+                # 1. 상단: 효능 & 용법
                 c_eff, c_use = st.columns(2)
                 with c_eff:
                     st.markdown("**💊 효능·효과**")
@@ -254,6 +291,7 @@ if 'last_report' in st.session_state and st.session_state['last_report']:
                     st.markdown("**📝 용법·용량**")
                     st.success(med.get('usage', '정보 없음'))
                 
+                # 2. 하단: 주의사항 & 음식
                 c_warn, c_food = st.columns(2)
                 with c_warn:
                     st.markdown("**⚠️ 주의사항**")
@@ -266,20 +304,25 @@ if 'last_report' in st.session_state and st.session_state['last_report']:
                     else:
                         st.caption("특별한 제한 없음")
                 
+                # 3. 추가 기능: 식약처 링크 & 삭제 버튼
                 st.divider()
                 c_link, c_del = st.columns([4, 1])
                 with c_link:
+                    # 식약처 검색 링크
                     clean_name = re.split(r'\(', med['name'])[0].strip()
                     encoded_name = quote(clean_name)
                     url = f"https://nedrug.mfds.go.kr/searchDrug?itemName={encoded_name}"
                     st.link_button("🔍 식약처 상세 검색", url, use_container_width=True)
                 
                 with c_del:
-                    # [삭제] DB 연동
+                    # 개별 삭제 버튼
                     if st.button("🗑️ 삭제", key=f"del_{med['name']}"):
-                        if db.delete_medicine(user_id, med['name']):
+                        if delete_medicine(med['name']):
                             st.success("삭제되었습니다.")
-                            time.sleep(0.5)
+                            st.session_state.medicines = load_data()
+                            # 삭제 후 리포트 갱신을 위해 캐시 삭제
+                            if 'last_report' in st.session_state:
+                                del st.session_state['last_report']
                             st.rerun()
 
         st.divider()
@@ -299,6 +342,12 @@ if 'last_report' in st.session_state and st.session_state['last_report']:
         if tips:
             st.subheader(tips.get("title", "복약 팁"))
             st.markdown(tips.get("content", ""))
+
+st.divider()
+
+# 2. 데이터 확인 (하단 배치)
+with st.expander("🔧 개발자 도구: JSON 데이터 확인"):
+    st.json(st.session_state.medicines)
 
 st.divider()
 
@@ -322,7 +371,7 @@ with col_right:
     clicked_date_str = state.get("dateClick", {}).get("date")
     if clicked_date_str:
         temp_date = datetime.datetime.strptime(clicked_date_str[:10], "%Y-%m-%d").date()
-        if "T" in clicked_date_str: # Timezone issue fix
+        if "T" in clicked_date_str:
             view_date = temp_date + datetime.timedelta(days=1)
         else:
             view_date = temp_date
@@ -332,15 +381,8 @@ with col_right:
     st.subheader(f"📋 {view_date.strftime('%m월 %d일')} 체크리스트")
     
     active_drugs = []
-    
-    # DB 데이터를 순회하며 해당 날짜에 먹어야 하는 약 필터링
     for drug in st.session_state.medicines:
-        s_date_str = drug['start_date']
-        if isinstance(s_date_str, str):
-            drug_start = datetime.datetime.strptime(s_date_str, "%Y-%m-%d").date()
-        else:
-            drug_start = s_date_str
-            
+        drug_start = drug['start_date']
         try:
             raw_days = drug.get('days', 3)
             days = int(raw_days)
@@ -355,22 +397,15 @@ with col_right:
             with st.container(border=True):
                 c1, c2, c3, c4, c5, c6 = st.columns([0.4, 2.2, 1.5, 1, 0.8, 1.2])
                 with c1:
-                    # [체크 로직] DB와 연동
-                    target_date_str = view_date.strftime("%Y-%m-%d")
-                    h_key = (target_date_str, drug['name'])
-                    
+                    h_key = (str(view_date), drug['name'])
                     is_checked = st.session_state.check_history.get(h_key, False)
-                    
-                    # 체크박스 상태 변경 감지
-                    new_checked = st.checkbox("복용 완료", label_visibility="collapsed", value=is_checked, key=f"cb_{target_date_str}_{drug['name']}")
-                    
-                    if new_checked != is_checked:
-                        # 상태가 변했으면 DB 업데이트
-                        db.toggle_check(user_id, target_date_str, drug['name'], new_checked)
-                        
-                        # 화면 갱신을 위해 세션 즉시 업데이트
-                        st.session_state.check_history[h_key] = new_checked
-                        st.rerun()
+                    if st.checkbox("복용 완료", label_visibility="collapsed", value=is_checked, key=f"cb_{view_date}_{drug['name']}"):
+                        st.session_state.check_history[h_key] = True
+                        save_history()
+                    else:
+                        if is_checked:
+                            st.session_state.check_history[h_key] = False
+                            save_history()
 
                 with c2: st.markdown(f"**{drug['name']}**")
                 with c3: st.caption(f"{drug['time']}")
