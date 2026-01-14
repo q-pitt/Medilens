@@ -84,16 +84,17 @@ def get_bulk_calendar_url(medicines, slot_name="전체", start_time=None, end_ti
 # --- 데이터 로드 (DB 연동) ---
 # 세션 상태 초기화 (또는 리프레시)
 user_medicines = db.get_medicines(user_id)
-st.session_state.medicines = user_medicines
+st.session_state.medicines = user_medicines  # 전체 데이터
 
 user_history = db.load_history(user_id)
 st.session_state.check_history = user_history
 
 # 리포트 로드 (세션에 없으면 DB에서 최신 조회)
-if 'last_report' not in st.session_state:
-    latest_report = db.load_latest_report(user_id)
-    if latest_report:
-        st.session_state['last_report'] = latest_report
+# 이 부분은 아래에서 selected_case에 따라 로드하도록 변경됨
+# if 'last_report' not in st.session_state:
+#     latest_report = db.load_latest_report(user_id)
+#     if latest_report:
+#         st.session_state['last_report'] = latest_report
 
 
 # ==========================================
@@ -101,8 +102,36 @@ if 'last_report' not in st.session_state:
 # ==========================================
 with st.sidebar:
     st.title("🧬 MediLens")
-    st.subheader("📸 처방전 업로드")
-    uploaded_file = st.file_uploader("이미지를 선택하세요", type=['png', 'jpg', 'jpeg'])
+    
+    # [처방전 그룹핑 및 선택]
+    case_groups = {}
+    for med in user_medicines:
+        c_id = med.get('case_id', 'Unknown')
+        if c_id not in case_groups:
+            case_groups[c_id] = []
+        case_groups[c_id].append(med)
+    
+    # 선택 옵션 생성 (최신순 등 정렬 가능)
+    # 예: "Case 1 (3개 약물)", "Case 2 (1개 약물)"
+    case_options = ["전체 보기"] + list(case_groups.keys())
+    
+    # 케이스 ID를 좀 더 읽기 좋게(날짜 등) 표시하면 좋지만, 지금은 ID/약물수로만 표시
+    def format_func(option):
+        if option == "전체 보기": return "📂 전체 약물 보기"
+        cnt = len(case_groups[option])
+        # 약물 중 첫 번째 약의 시작 날짜를 대표로 표시
+        first_date = case_groups[option][0].get('start_date', '?')
+        return f"📄 처방전 ({first_date} 접수, {cnt}개 약물)"
+
+    # 사이드바 하단 리스트 위치 (새로고침 위)
+    st.subheader("📁 내 처방전 목록")
+    selected_case = st.selectbox("확인할 처방전을 선택하세요", case_options, format_func=format_func)
+    
+    st.divider()
+
+    # 업로드 기능
+    st.subheader("📸 새 처방전 추가")
+    uploaded_file = st.file_uploader("이미지를 업로드하세요", type=['png', 'jpg', 'jpeg'])
     
     if uploaded_file:
         st.image(uploaded_file, caption="업로드된 이미지", use_container_width=True)
@@ -136,6 +165,10 @@ with st.sidebar:
                     st.write("🧠 AI가 복약 지도를 작성 중입니다...")
                     ai_result = care_processor.analyze_with_llm(final_json)
                     
+                    # [DEBUG] 세션에 중간 데이터 저장
+                    st.session_state['debug_ocr'] = ocr_result
+                    st.session_state['debug_ai'] = ai_result
+                    
                     if "error" in ai_result:
                         st.error(ai_result["error"])
                         st.stop()
@@ -159,7 +192,16 @@ with st.sidebar:
                         days = int(raw_days)
                     except:
                         days = 3
-                  
+                    
+                    # [시간 파싱] 약물별 개별 스케줄 우선 적용
+                    d_schedule = drug.get('time_list', [])
+                    if not d_schedule:
+                        # 없으면 전체 공용 스케줄 사용
+                        d_schedule = ai_result.get('schedule_time_list', ["식후 30분"])
+                    
+                    # 리스트 -> 문자열 변환 ("아침, 점심, 저녁")
+                    time_str = ", ".join(d_schedule)
+
                     # DB 저장용 딕셔너리 구성
                     entry = {
                         "name": drug_name,
@@ -194,20 +236,36 @@ with st.sidebar:
                 st.error(f"처리 중 오류가 발생했습니다: {e}")
 
     # 사이드바 하단
-    for _ in range(10): st.sidebar.write("")
+    for _ in range(5): st.sidebar.write("")
     st.divider()
     
     # 데이터 초기화 (전체 삭제 기능은 복잡하므로 개별 삭제 권장, 일단 비활성화 or 전체 삭제 구현)
     if st.sidebar.button("DB 새로고침", use_container_width=True):
+        st.cache_resource.clear()
         st.rerun()
+
+# ----------------------------------------------------
+# [Main Logic] 선택된 Case에 따라 데이터 필터링
+# ----------------------------------------------------
+if selected_case == "전체 보기":
+    filtered_medicines = st.session_state.medicines
+    # 전체 보기일 때는 가장 최신 리포트를 보여주거나, 리포트를 숨길 수 있음.
+    # 여기서는 가장 최신(all)로 로드
+    current_report = db.load_latest_report(user_id, case_id=None)
+else:
+    filtered_medicines = case_groups[selected_case]
+    # 선택된 케이스의 리포트 로드
+    current_report = db.load_latest_report(user_id, case_id=selected_case)
+
+st.session_state['last_report'] = current_report
 
 
 # ==========================================
-# 3. 달력 이벤트 구성
+# 3. 달력 이벤트 구성 (filtered_medicines 기준)
 # ==========================================
 calendar_events = []
 
-for drug in st.session_state.medicines:
+for drug in filtered_medicines:
     # DB에서 가져온 날짜는 String일 수 있음
     s_date_str = drug['start_date']
     if isinstance(s_date_str, str):
@@ -221,9 +279,18 @@ for drug in st.session_state.medicines:
         current_date = start_date + datetime.timedelta(days=i)
         current_date_str = current_date.strftime("%Y-%m-%d")
         
-        # 키 형식 주의: (날짜문자열, 약이름)
-        h_key = (current_date_str, drug['name'])
-        is_checked = st.session_state.check_history.get(h_key, False)
+        # [달력 체크 확인] 약물의 모든 복용 시간(아침, 점심 등)을 완료했는지 검사
+        time_list = [t.strip() for t in drug.get('time', '').split(',') if t.strip()]
+        if not time_list: time_list = ['기본']
+
+        all_checked = True
+        for t_val in time_list:
+            h_key = (current_date_str, drug['name'], t_val)
+            if not st.session_state.check_history.get(h_key, False):
+                all_checked = False
+                break
+        
+        is_checked = all_checked
         
         display_title = f"✅ {drug['name']}" if is_checked else drug['name']
         base_color = drug.get('color', '#3D9DF3')
@@ -247,12 +314,15 @@ for drug in st.session_state.medicines:
 st.title("💊 메디렌즈 - AI 복약 스케줄러")
 st.divider()
 
+if selected_case != "전체 보기":
+    st.caption(f"현재 보고 있는 처방전: {selected_case}")
+
 st.subheader("📝 종합 복약 리포트")
 st.write("사용자의 모든 처방 약을 분석하여 종합 가이드를 생성합니다.")
 
 if 'last_report' not in st.session_state or not st.session_state['last_report']:
-    if st.session_state.medicines:
-        st.info("💡 등록된 리포트가 없습니다.")
+    if filtered_medicines:
+        st.info("💡 등록된 리포트가 없습니다. (또는 이전 버전 데이터)")
     else:
         st.info("비어있는 처방전입니다. 사이드바에서 약을 먼저 등록해주세요.")
         
@@ -269,6 +339,8 @@ if 'last_report' in st.session_state and st.session_state['last_report']:
 
         # 2. 약물별 상세 카드
         st.subheader("💊 처방 약 설명과 복용법")
+        # 리포트에 있는 약물 정보가 현재 필터된 약물 목록과 일치하지 않을 수 있음 (전체 리포트일 경우)
+        # 하지만 여기서 보여주는건 리포트 내용이므로 그대로 출력
         for med in report.get("medicines", []):
             with st.expander(f"**{med.get('name', '약품')}** 상세 정보", expanded=True):
                 
@@ -412,7 +484,8 @@ with col_right:
     active_drugs = []
     
     # DB 데이터를 순회하며 해당 날짜에 먹어야 하는 약 필터링
-    for drug in st.session_state.medicines:
+    # [수정] filtered_medicines 사용
+    for i, drug in enumerate(filtered_medicines):
         s_date_str = drug['start_date']
         if isinstance(s_date_str, str):
             drug_start = datetime.datetime.strptime(s_date_str, "%Y-%m-%d").date()
@@ -457,7 +530,7 @@ with col_right:
                         # DB에서 로드해온 기록 확인
                         is_checked = st.session_state.check_history.get(h_key, False)
                         
-                        if st.checkbox(f"{t_val} 복용", value=is_checked, key=f"cb_{target_date_str}_{drug['name']}_{t_val}"):
+                        if st.checkbox(f"{t_val} 복용", value=is_checked, key=f"cb_{i}_{target_date_str}_{drug['name']}_{t_val}"):
                             if not is_checked: # False -> True 될 때
                                 db.toggle_check(user_id, target_date_str, drug['name'], t_val, True)
                                 st.session_state.check_history[h_key] = True
@@ -469,5 +542,22 @@ with col_right:
                                 st.rerun()
 
 
-    if not active_drugs and st.session_state.medicines:
+    if not active_drugs and filtered_medicines:
         st.info("해당 날짜에는 복용할 약이 없습니다.")
+
+# ==========================================
+# [DEBUG] 하단 데이터 검증 영역
+# ==========================================
+st.divider()
+with st.expander("🛠️ 개발자용 데이터 확인 (Debug)", expanded=False):
+    st.markdown("### 1. OCR 인식 결과")
+    if 'debug_ocr' in st.session_state:
+        st.json(st.session_state['debug_ocr'])
+    else:
+        st.info("OCR 데이터가 없습니다.")
+
+    st.markdown("### 2. AI 분석 결과")
+    if 'debug_ai' in st.session_state:
+        st.json(st.session_state['debug_ai'])
+    else:
+        st.info("AI 분석 데이터가 없습니다.")
