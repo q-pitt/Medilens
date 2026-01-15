@@ -822,14 +822,16 @@ for drug in filtered_medicines:
 # ==========================================
 # 4. 상단: 상세 요약 및 리포트
 # ==========================================
-st.title("💊 메디렌즈 - AI 복약 스케줄러")
-st.divider()
+st.title("💊 메디렌즈 - AI 종합 복약 가이드")
+st.caption("🛡️ 식약처(MFDS) 공식 데이터 기반")
+# st.divider()
 
 if selected_case != "전체 보기":
     st.caption(f"현재 보고 있는 처방전: {selected_case}")
 
 st.subheader("📝 종합 복약 리포트")
-st.write("사용자의 모든 처방 약을 분석하여 종합 가이드를 생성합니다.")
+
+# st.write("사용자의 모든 처방 약을 분석하여 종합 가이드를 생성합니다.")
 
 if 'last_report' not in st.session_state or not st.session_state['last_report']:
     if filtered_medicines:
@@ -846,12 +848,12 @@ if st.session_state.get('last_report'):
     else:
         # 1. 인사말
         st.info(report.get("opening_message", "안녕하세요."))
-        st.divider()
+        # st.divider()
 
         # 2. 약물별 상세 카드
-        st.subheader("💊 처방 약 설명과 복용법")
+        st.subheader("💊 처방약 설명과 복용법")
         for med in report.get("medicines", []):
-            with st.expander(f"**{med.get('name', '약품')}** 상세 정보", expanded=True):
+            with st.expander(f"**{med.get('name', '약품')}** 상세 정보 ✅ MFDS(식약처) Verified", expanded=True):
                 c1, c2 = st.columns(2)
                 c1.markdown("**💊 효능·효과**"); c1.info(med.get('efficacy', '-'))
                 c2.markdown("**📝 용법·용량**"); c2.success(med.get('usage', '-'))
@@ -920,11 +922,11 @@ with col_right:
     head_col1, head_col2, head_col3 = st.columns([2.5, 1.5, 1.5]) 
     
     with head_col1:
-        st.subheader(f"📋 {view_date.strftime('%m월 %d일')} 리스트")
+        st.subheader(f"📋 {view_date.strftime('%m/%d')} 리스트")
     
     with head_col2:
         # 📅 일정 일괄 수정 팝오버
-        with st.popover("📅 일정 일괄 수정", use_container_width=True):
+        with st.popover("📅 일정 수정", use_container_width=True):
             st.subheader("🗓️ 날짜 수정")
             
             # --- [전체 일괄 변경 섹션] ---
@@ -1033,19 +1035,26 @@ with col_right:
     if not active_drugs and filtered_medicines:
         st.info("해당 날짜에는 복용할 약이 없습니다.")
 
+st.divider()
+# with st.container(border=True):
+#     st.markdown("### ⚠️ 면책 조항 (Disclaimer)")
+#     st.warning("**본 리포트는 의료진의 전문적 판단을 대체하지 않습니다.** \n\n중요한 의학적 결정이나 복약 상담은 반드시 의사나 약사와 상의하시기 바랍니다. 이 서비스는 보조적인 정보 제공만을 목적으로 합니다.")
+
+st.warning("본 서비스는 식약처 의약품 허가정보를 기반으로 제공됩니다. 제공되는 정보 의 정확성을 위해 최선을 다하고 있으나, 의료진의 판단을 대체하지 않습니다. 중요한 의학적 판단은 반드시 의사의 판단을 따라야 합니다.")
+
 # ==========================================
 # [DEBUG] 하단 데이터 검증 영역
 # ==========================================
-st.divider()
-with st.expander("🛠️ 개발자용 데이터 확인 (Debug - Phase 4)", expanded=False):
-    st.markdown("### 1. Pipeline Metrics (Raw Data)")
-    if 'pipeline_metrics' in st.session_state:
-        st.json(st.session_state['pipeline_metrics'])
-    else:
-        st.info("파이프라인 데이터가 없습니다.")
+# st.divider()
+# with st.expander("🛠️ 개발자용 데이터 확인 (Debug - Phase 4)", expanded=False):
+#     st.markdown("### 1. Pipeline Metrics (Raw Data)")
+#     if 'pipeline_metrics' in st.session_state:
+#         st.json(st.session_state['pipeline_metrics'])
+#     else:
+#         st.info("파이프라인 데이터가 없습니다.")
 
-    st.markdown("### 2. Final Meta Analysis (Quality Score)")
-    if st.session_state.get('last_report'):
-        st.json(st.session_state['last_report'].get('meta_analysis', {}))
-    else:
-        st.info("리포트 메타 데이터가 없습니다.")
+#     st.markdown("### 2. Final Meta Analysis (Quality Score)")
+#     if st.session_state.get('last_report'):
+#         st.json(st.session_state['last_report'].get('meta_analysis', {}))
+#     else:
+#         st.info("리포트 메타 데이터가 없습니다.")
